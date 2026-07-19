@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { env } from "../config/env.js";
 import { AppError } from "./errors.js";
 
@@ -56,4 +56,20 @@ export function decryptBytes(value: string, associatedData: string): Buffer {
 
 export function sha256(value: Buffer | string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+/**
+ * Authenticates database rows whose integrity is no longer covered by an
+ * encryption AAD. Content-addressed blobs are shared across paths, so the
+ * association between a version row and its path is signed here instead.
+ */
+export function hmac(value: string): string {
+  return createHmac("sha256", key).update(value).digest("hex");
+}
+
+export function hmacMatches(value: string, expected: string | null | undefined): boolean {
+  if (!expected) return false;
+  const actual = Buffer.from(hmac(value), "hex");
+  const candidate = Buffer.from(expected, "hex");
+  return actual.length === candidate.length && timingSafeEqual(actual, candidate);
 }

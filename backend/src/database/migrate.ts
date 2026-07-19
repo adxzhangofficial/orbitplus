@@ -2,7 +2,12 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type { PoolClient } from "pg";
-import { encryptFileVersionContent } from "../services/file-version-crypto.js";
+import {
+  decryptFileVersionContent,
+  encryptBlobContent,
+  encryptFileVersionContent,
+  signVersionRow,
+} from "../services/file-version-crypto.js";
 import { closePool, pool } from "./pool.js";
 import { expectedMigrationNames, migrationsDirectory } from "./schema.js";
 
@@ -38,6 +43,64 @@ async function backfillEncryptedFileVersions(client: PoolClient): Promise<void> 
   }
 }
 
+/**
+ * Moves per-version ciphertext into the shared, content-addressed blob table
+ * and signs each version row. Runs in batches inside the migration transaction
+ * so an interrupted deployment resumes rather than half-converting.
+ */
+async function backfillContentAddressedBlobs(client: PoolClient): Promise<void> {
+  while (true) {
+    const legacy = await client.query<{
+      id: string;
+      organization_id: string;
+      server_id: string;
+      path: string;
+      version_number: number;
+      checksum: string;
+      content_ciphertext: string;
+    }>(`SELECT id, organization_id, server_id, path, version_number, checksum, content_ciphertext
+          FROM file_versions
+         WHERE content_ciphertext IS NOT NULL
+         ORDER BY id
+         LIMIT 100
+         FOR UPDATE`);
+    if (legacy.rows.length === 0) break;
+
+    for (const version of legacy.rows) {
+      const content = decryptFileVersionContent(version.content_ciphertext, {
+        organizationId: version.organization_id,
+        serverId: version.server_id,
+        path: version.path,
+        checksum: version.checksum,
+      });
+      await client.query(
+        `INSERT INTO file_blobs(organization_id, checksum, content_ciphertext, size_bytes)
+         VALUES($1, $2, $3, $4)
+         ON CONFLICT (organization_id, checksum) DO NOTHING`,
+        [
+          version.organization_id,
+          version.checksum,
+          encryptBlobContent(content, { organizationId: version.organization_id, checksum: version.checksum }),
+          content.length,
+        ],
+      );
+      await client.query(
+        "UPDATE file_versions SET content_ciphertext = NULL, row_signature = $2 WHERE id = $1",
+        [
+          version.id,
+          signVersionRow({
+            organizationId: version.organization_id,
+            serverId: version.server_id,
+            path: version.path,
+            versionNumber: version.version_number,
+            checksum: version.checksum,
+          }),
+        ],
+      );
+    }
+  }
+}
+
 export async function migrate(): Promise<void> {
   const files = await expectedMigrationNames();
   const client = await pool.connect();
@@ -60,9 +123,18 @@ export async function migrate(): Promise<void> {
         if (file === "003_require_encrypted_file_versions.sql") {
           await backfillEncryptedFileVersions(client);
         }
+        // 006 enforces blob-only storage, so any row a prior interrupted run
+        // left behind must be converted before the constraint is applied.
+        if (file === "006_require_blob_storage.sql") {
+          await backfillContentAddressedBlobs(client);
+        }
         await client.query(sql);
         if (file === "002_encrypt_file_versions.sql") {
           await backfillEncryptedFileVersions(client);
+        }
+        // 005 creates file_blobs, so the conversion can only run after its DDL.
+        if (file === "005_content_addressed_blobs.sql") {
+          await backfillContentAddressedBlobs(client);
         }
         await client.query("INSERT INTO schema_migrations(name) VALUES($1)", [file]);
         await client.query("COMMIT");

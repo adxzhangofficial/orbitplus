@@ -1,11 +1,13 @@
 import { Router } from "express";
+import multer from "multer";
 import { z } from "zod";
+import { env } from "../config/env.js";
 import { withAdapter } from "../adapters/index.js";
 import { normalizeRemotePath } from "../adapters/path-policy.js";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { sha256 } from "../lib/crypto.js";
-import { notFound } from "../lib/errors.js";
+import { badRequest, notFound } from "../lib/errors.js";
 import { explicitQueryBoolean } from "../lib/query-boolean.js";
 import { routeParam } from "../lib/route-param.js";
 import { requireRole } from "../middleware/auth.js";
@@ -19,6 +21,16 @@ const writeSchema = z.object({
   encoding: z.enum(["utf8", "base64"]).default("utf8"),
   expectedChecksum: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   note: z.string().max(500).optional(),
+});
+
+/**
+ * Uploads are buffered in memory rather than spooled to disk. The per-file cap
+ * keeps that bounded, and avoiding a temp file means no partially written
+ * upload can survive a crash on a shared worker.
+ */
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: env.MAX_UPLOAD_BYTES, files: 20 },
 });
 
 export const filesRouter = Router({ mergeParams: true });
@@ -73,6 +85,88 @@ filesRouter.put(
       note: input.note,
     }));
     response.json({ data: { path, size: content.length, checksum: version.checksum, versionId: version.id, versionNumber: version.versionNumber } });
+  }),
+);
+
+/**
+ * Streams a file to the browser as an attachment. Unlike /content this has no
+ * editor size limit and never base64-expands the payload into JSON, so it is
+ * the correct path for binaries and large files.
+ */
+filesRouter.get(
+  "/download",
+  asyncHandler(async (request, response) => {
+    const query = pathQuery.parse(request.query);
+    const path = normalizeRemotePath(query.path);
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
+    const content = await withAdapter(server, (adapter) => adapter.read(path));
+    const filename = path.split("/").filter(Boolean).at(-1) ?? "download";
+    response.setHeader("content-type", "application/octet-stream");
+    response.setHeader("content-length", String(content.length));
+    // RFC 5987 encoding so non-ASCII names survive the header.
+    response.setHeader(
+      "content-disposition",
+      `attachment; filename="${filename.replace(/[^\w.\-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    response.setHeader("x-orbit-checksum", sha256(content));
+    response.send(content);
+  }),
+);
+
+filesRouter.post(
+  "/upload",
+  requireRole("developer"),
+  upload.array("files", 20),
+  asyncHandler(async (request, response) => {
+    const files = (request.files as Express.Multer.File[] | undefined) ?? [];
+    if (files.length === 0) throw badRequest("Attach at least one file to upload");
+    const directory = normalizeRemotePath(
+      typeof request.body?.path === "string" && request.body.path.length > 0 ? request.body.path : "/",
+    );
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
+
+    const results = await withAdapter(server, async (adapter) => {
+      const written: Array<{ path: string; size: number; checksum: string; versioned: boolean; versionId?: string }> = [];
+      for (const file of files) {
+        // multer preserves the client-supplied name; strip any directory
+        // component so an upload cannot escape the chosen folder.
+        const name = file.originalname.split(/[\\/]/).pop() || "upload";
+        const target = normalizeRemotePath(`${directory.replace(/\/$/, "")}/${name}`);
+        const checksum = sha256(file.buffer);
+
+        if (file.buffer.length <= env.MAX_VERSIONED_UPLOAD_BYTES) {
+          const previous = await readOptional(adapter, target);
+          if (previous && previous.length <= env.MAX_VERSIONED_UPLOAD_BYTES) {
+            await saveVersion({
+              organizationId: request.tenant!.organizationId,
+              serverId: server.id,
+              path: target,
+              content: previous,
+              userId: request.auth!.userId,
+              operation: "pre-upload",
+            });
+          }
+          await adapter.write(target, file.buffer);
+          const version = await saveVersion({
+            organizationId: request.tenant!.organizationId,
+            serverId: server.id,
+            path: target,
+            content: file.buffer,
+            userId: request.auth!.userId,
+            operation: "upload",
+          });
+          written.push({ path: target, size: file.buffer.length, checksum, versioned: true, versionId: version.id });
+        } else {
+          // Too large for history; the bytes land on the server and the audit
+          // trail records the checksum without storing a copy.
+          await adapter.write(target, file.buffer);
+          written.push({ path: target, size: file.buffer.length, checksum, versioned: false });
+        }
+      }
+      return written;
+    });
+
+    response.status(201).json({ data: results, meta: { directory, count: results.length } });
   }),
 );
 

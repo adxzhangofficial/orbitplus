@@ -13,6 +13,12 @@ const envSchema = z.object({
   SEED_DATABASE_NAME: z.string().min(1).optional(),
   SFTP_ALLOW_PRIVATE_NETWORKS: z.string().default("false").transform((value) => value === "true"),
   MAX_FILE_BYTES: z.coerce.number().int().positive().default(2 * 1024 * 1024),
+  // Uploads bypass the editor's version-history path, so they are allowed to be
+  // considerably larger than a file the browser will render in an editor.
+  MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(100 * 1024 * 1024),
+  // Contents at or below this size are versioned on upload. Larger uploads are
+  // recorded by checksum only, so a video does not enter version history.
+  MAX_VERSIONED_UPLOAD_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
   LOG_LEVEL: z.enum(["silent", "error", "warn", "info", "debug"]).default("info"),
 
   // Canonical public origin used to build emailed links. FRONTEND_URL may hold
