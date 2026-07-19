@@ -78,6 +78,14 @@ npm run db:seed
 npm run dev
 ```
 
+`npm run dev` starts three processes: the API, the job worker, and the web app.
+The worker is not optional. Transfers, backups, scheduled automations, and
+remote tree indexing are all queued rather than run inside the request, so
+without it those actions are accepted and then never execute.
+
+Run each separately with `npm run dev:api`, `npm run dev:worker`, and
+`npm run dev:web` when you want their logs apart.
+
 - Web: `http://127.0.0.1:5173`
 - API: `http://127.0.0.1:4400/api/v1`
 - Health: `http://127.0.0.1:4400/api/v1/health`
