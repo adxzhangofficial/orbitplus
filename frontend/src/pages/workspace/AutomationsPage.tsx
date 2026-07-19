@@ -26,7 +26,7 @@ const mapTrigger = (value: string): BackendAutomation["triggerType"] => value ==
 const mapAction = (value: string): BackendAutomation["actionType"] => value === "Create backup" ? "backup" : value === "Deploy project" ? "deployment" : value === "Synchronize files" ? "sync" : value === "Run health check" ? "health_check" : "webhook";
 
 export function AutomationsPage() {
-  const resource = useLiveResource(previewAutomations, [] as Automation[], async () => (await api.get<BackendAutomation[]>("/automations")).map(toAutomation));
+  const resource = useLiveResource([] as Automation[], async () => (await api.get<BackendAutomation[]>("/automations")).map(toAutomation));
   const { data: items, setData: setItems, live } = resource;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");

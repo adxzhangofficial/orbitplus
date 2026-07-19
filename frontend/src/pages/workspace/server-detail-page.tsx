@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   ArchiveRestore,
@@ -29,12 +29,49 @@ import { Link, NavLink, useParams } from "react-router-dom";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { toast } from "sonner";
 import { Badge, Button, Progress, StatusBadge } from "@/components/ui";
-import { activities, backups, deployments, metrics, servers, transfers } from "@/lib/mock-data";
+import { api } from "@/lib/api";
+import type { ActivityEvent as ActivityRecord, Backup, Deployment, Server, Transfer } from "@/types";
+
+// Sections without a per-server endpoint render empty rather than borrowing
+// another server's records. Typed so the panels below still compile against
+// the real shapes they will receive once those endpoints exist.
+const activities: ActivityRecord[] = [];
+const backups: Backup[] = [];
+const deployments: Deployment[] = [];
+const transfers: Transfer[] = [];
+const metrics: Array<{ time: string; cpu: number; memory: number; network: number }> = [];
 import { cn, formatBytes, relativeTime } from "@/lib/utils";
 
 export function ServerDetailPage() {
-  const { serverId = "srv_prod_01" } = useParams();
-  const server = servers.find((item) => item.id === serverId) ?? servers[0];
+  const { serverId = "" } = useParams();
+  const [server, setServer] = useState<Server>();
+  const [loadError, setLoadError] = useState<string>();
+
+  useEffect(() => {
+    if (!serverId) return;
+    let active = true;
+    api.get<{ id: string; name: string; host: string; port: number; username: string; rootPath: string; environment: Server["environment"]; status: string; lastLatencyMs?: number; hostFingerprint?: string }>(`/servers/${serverId}`)
+      .then((remote) => {
+        if (!active) return;
+        setServer({ id: remote.id, name: remote.name, host: remote.host, port: remote.port, username: remote.username, rootPath: remote.rootPath, environment: remote.environment, status: remote.status === "offline" ? "offline" : remote.status === "degraded" ? "degraded" : "online", protocol: "SFTP", region: "Customer managed", provider: "Orbit worker", latency: remote.lastLatencyMs ?? 0, cpu: 0, memory: 0, disk: 0, uptime: "—", lastSeen: new Date().toISOString(), tags: [remote.environment], fingerprint: remote.hostFingerprint });
+      })
+      .catch((error: unknown) => { if (active) setLoadError(error instanceof Error ? error.message : "Could not load this server"); });
+    return () => { active = false; };
+  }, [serverId]);
+  // Everything below reads the loaded record, so the page waits for it rather
+  // than falling back to another server's details.
+  if (!server) {
+    return <div className="grid min-h-[60vh] place-items-center px-6 text-center">
+      {loadError
+        ? <div><p className="text-sm text-zinc-300">Could not load this server</p><p className="mx-auto mt-2 max-w-md text-[10px] leading-4 text-zinc-600">{loadError}</p><Link to="/workspace/servers" className="mt-4 inline-block text-[10px] text-blue-400">Back to servers</Link></div>
+        : <p className="text-[10px] text-zinc-600">Loading server…</p>}
+    </div>;
+  }
+
+  return <ServerDetail server={server} />;
+}
+
+function ServerDetail({ server }: { server: Server }) {
   const [connected, setConnected] = useState(server.status !== "offline");
   const [starred, setStarred] = useState(Boolean(server.starred));
   const tabs = [

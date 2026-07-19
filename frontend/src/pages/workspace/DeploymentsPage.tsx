@@ -3,7 +3,6 @@ import { Box, CheckCircle2, Clock3, GitBranch, GitCommit, Plus, Rocket, RotateCc
 import { toast } from "sonner";
 import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
-import { deployments as seedDeployments, servers as seedServers } from "@/lib/mock-data";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { relativeTime } from "@/lib/utils";
 import type { Deployment } from "@/types";
@@ -23,14 +22,13 @@ function toDeployment(item: BackendDeployment): DeploymentRow {
 }
 
 export function DeploymentsPage() {
-  const previewRows: DeploymentRow[] = seedDeployments;
-  const deployments = useLiveResource(previewRows, [] as DeploymentRow[], async () => (await api.get<BackendDeployment[]>("/deployments?limit=100")).map(toDeployment));
-  const servers = useLiveResource(seedServers.map((server) => ({ id: server.id, workspaceId: "preview", name: server.name, environment: server.environment })), [] as ServerOption[], () => api.get<ServerOption[]>("/servers?limit=100"));
+  const deployments = useLiveResource([] as DeploymentRow[], async () => (await api.get<BackendDeployment[]>("/deployments?limit=100")).map(toDeployment));
+  const servers = useLiveResource([] as ServerOption[], () => api.get<ServerOption[]>("/servers?limit=100"));
   const { data: items, setData: setItems, live } = deployments;
   const [query, setQuery] = useState("");
   const [environment, setEnvironment] = useState("all");
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState({ project: "acme-api", serverId: seedServers[0].id, environment: "production" as ServerOption["environment"], branch: "main", version: "release-1" });
+  const [draft, setDraft] = useState({ project: "acme-api", serverId: "", environment: "production" as ServerOption["environment"], branch: "main", version: "release-1" });
   const filtered = useMemo(() => items.filter((item) => (environment === "all" || item.environment.toLowerCase() === environment) && `${item.project} ${item.branch} ${item.commit} ${item.author}`.toLowerCase().includes(query.toLowerCase())), [items, query, environment]);
 
   async function deploy() {

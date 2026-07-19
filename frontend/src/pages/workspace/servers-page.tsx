@@ -20,7 +20,6 @@ import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Badge, Button, Field, Input, Modal, Progress, Select, StatusBadge, Table, TableHead, TableWrap, Td, Th, Tr } from "@/components/ui";
-import { servers as seededServers } from "@/lib/mock-data";
 import { api } from "@/lib/api";
 import { cn, relativeTime } from "@/lib/utils";
 import type { Server } from "@/types";
@@ -42,7 +41,7 @@ interface DiscoveredKey { fingerprint: string; sha256: string; keyType: string; 
 
 export function ServersPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [servers, setServers] = useState<Server[]>(seededServers);
+  const [servers, setServers] = useState<Server[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredKey>();
   const [discoverError, setDiscoverError] = useState<string>();
@@ -131,10 +130,6 @@ export function ServersPage() {
   }
 
   async function testConnection() {
-    if (!localStorage.getItem("orbit.accessToken")) {
-      toast.error("Sign in to verify a real SFTP connection", { description: "Demo preview sessions cannot reach or store server credentials." });
-      return;
-    }
     setTesting(true);
     setTested(false);
     try {
@@ -148,7 +143,7 @@ export function ServersPage() {
     }
   }
   async function saveConnection() {
-    if (!tested || !localStorage.getItem("orbit.accessToken")) return;
+    if (!tested) return;
     try {
       const workspaces = await api.get<Array<{ id: string }>>("/workspaces");
       if (!workspaces[0]) throw new Error("Create a workspace before connecting a server.");

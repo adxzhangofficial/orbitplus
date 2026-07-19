@@ -2,13 +2,14 @@ import { useMemo, useState } from "react";
 import { BarChart3, CircleDollarSign, CreditCard, Download, MoreHorizontal, RefreshCw, TrendingUp, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { relativeTime } from "@/lib/utils";
-import { organizations as seedOrganizations } from "@/lib/mock-data";
 import { AdminDataNotice, adminApi, type AdminCustomer, type AdminOverview, unsupported, useAdminResource } from "./_api";
 import { AdminButton, AdminPageHeader, BarChart, DetailGrid, Drawer, IconAction, Pagination, Panel, SearchBox, Stat, StatusPill, downloadCsv, formatCurrency, usePagination } from "./_shared";
 
 interface RevenueData { overview: AdminOverview; customers: AdminCustomer[] }
 
-const fallbackCustomers: AdminCustomer[] = seedOrganizations.map((item) => ({ id: item.id, name: item.name, slug: item.slug, plan: item.plan.toLowerCase() as AdminCustomer["plan"], status: item.status === "trial" || item.status === "past_due" ? "trialing" : item.status === "active" || item.status === "suspended" ? item.status : "cancelled", members: item.members, workspaces: 1, servers: item.servers, backupBytes: 0, createdAt: item.joinedAt }));
+// No fabricated tenants: an unauthenticated or failing admin API shows an
+// empty ledger rather than a fictional customer base.
+const fallbackCustomers: AdminCustomer[] = [];
 const fallback: RevenueData = { overview: { counts: { users: 1284, organizations: fallbackCustomers.length, servers: 319, activeTransfers: 18, criticalAlerts: 2, suspendedOrganizations: fallbackCustomers.filter((item) => item.status === "suspended").length }, revenue: { monthlyRecurringCents: 32_400_00, free: fallbackCustomers.filter((item) => item.plan === "free").length, pro: fallbackCustomers.filter((item) => item.plan === "pro").length, enterprise: fallbackCustomers.filter((item) => item.plan === "enterprise").length }, growth: [], infrastructure: { online: 302, offline: 9, unknown: 8 }, recentCustomers: [] }, customers: fallbackCustomers };
 
 async function loadRevenue(): Promise<RevenueData> {

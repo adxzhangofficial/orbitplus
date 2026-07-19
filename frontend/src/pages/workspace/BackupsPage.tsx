@@ -3,7 +3,6 @@ import { Archive, CalendarClock, CheckCircle2, DatabaseBackup, Download, MoreHor
 import { toast } from "sonner";
 import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
-import { backups as seedBackups, servers as seedServers } from "@/lib/mock-data";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { formatBytes, formatNumber, relativeTime } from "@/lib/utils";
 import type { Backup } from "@/types";
@@ -22,15 +21,15 @@ function toBackup(item: BackendBackup): Backup {
 }
 
 export function BackupsPage() {
-  const backups = useLiveResource(seedBackups, [] as Backup[], async () => (await api.get<BackendBackup[]>("/backups?limit=100")).map(toBackup));
-  const servers = useLiveResource(seedServers.map(({ id, name }) => ({ id, name })), [] as ServerOption[], () => api.get<ServerOption[]>("/servers?limit=100"));
+  const backups = useLiveResource([] as Backup[], async () => (await api.get<BackendBackup[]>("/backups?limit=100")).map(toBackup));
+  const servers = useLiveResource([] as ServerOption[], () => api.get<ServerOption[]>("/servers?limit=100"));
   const { data: items, setData: setItems, live } = backups;
   const [previewRows, setPreviewRows] = useState(previewSchedules);
   const scheduleRows = live ? [] : previewRows;
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<"backups" | "schedules">("backups");
   const [createOpen, setCreateOpen] = useState(false);
-  const [draft, setDraft] = useState({ name: "On-demand backup", serverId: seedServers[0].id, path: "/", type: "snapshot" as Backup["type"], retentionDays: 30 });
+  const [draft, setDraft] = useState({ name: "On-demand backup", serverId: "", path: "/", type: "snapshot" as Backup["type"], retentionDays: 30 });
   const filtered = useMemo(() => items.filter((item) => `${item.name} ${item.server} ${item.type}`.toLowerCase().includes(query.toLowerCase())), [items, query]);
   const total = items.reduce((sum, item) => sum + item.size, 0);
 

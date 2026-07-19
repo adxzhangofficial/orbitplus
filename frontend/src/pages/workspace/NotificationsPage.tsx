@@ -3,7 +3,6 @@ import { Bell, BellOff, Check, CheckCheck, CircleAlert, Inbox, Mail, ShieldAlert
 import { toast } from "sonner";
 import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
-import { notifications as previewNotifications } from "@/lib/mock-data";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { cn, relativeTime } from "@/lib/utils";
 import type { Notification } from "@/types";
@@ -16,7 +15,7 @@ function toNotification(item: BackendNotification): Notification {
 }
 
 export function NotificationsPage() {
-  const resource = useLiveResource(previewNotifications, [] as Notification[], async () => (await api.get<BackendNotification[]>("/notifications")).map(toNotification));
+  const resource = useLiveResource([] as Notification[], async () => (await api.get<BackendNotification[]>("/notifications")).map(toNotification));
   const { data: items, setData: setItems, live } = resource;
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const [preferences, setPreferences] = useState({ deployments: true, backups: true, security: true, monitoring: true, digest: false });

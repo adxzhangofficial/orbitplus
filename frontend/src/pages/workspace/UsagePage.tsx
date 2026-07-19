@@ -16,7 +16,7 @@ const emptyData: UsageData = { usage: { members: 0, workspaces: 0, servers: 0, b
 const daily = Array.from({ length: 30 }, (_, index) => ({ day: `${index + 1}`, bandwidth: 9 + (index * 17) % 32, operations: 1200 + (index * 823) % 5100 }));
 
 export function UsagePage() {
-  const resource = useLiveResource(previewData, emptyData, () => api.get<UsageData>("/billing"));
+  const resource = useLiveResource(emptyData, () => api.get<UsageData>("/billing"));
   const { data, live } = resource;
   const [range, setRange] = useState<"30d" | "90d" | "12m">("30d");
   const factor = range === "30d" ? 1 : range === "90d" ? 1.6 : 2.4;

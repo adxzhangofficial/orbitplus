@@ -3,7 +3,6 @@ import { Activity, Download, Eye, FileClock, Filter, SearchX, ShieldCheck } from
 import { toast } from "sonner";
 import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
-import { activities as previewActivities } from "@/lib/mock-data";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { relativeTime } from "@/lib/utils";
 import type { ActivityEvent } from "@/types";
@@ -20,7 +19,7 @@ function toActivity(item: BackendActivity): ActivityEvent {
 }
 
 export function ActivityPage() {
-  const resourceState = useLiveResource(previewActivities, [] as ActivityEvent[], async () => (await api.get<BackendActivity[]>("/activity?limit=100")).map(toActivity));
+  const resourceState = useLiveResource([] as ActivityEvent[], async () => (await api.get<BackendActivity[]>("/activity?limit=100")).map(toActivity));
   const { data: events, live } = resourceState;
   const [query, setQuery] = useState("");
   const [severity, setSeverity] = useState("all");

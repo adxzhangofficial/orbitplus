@@ -4,22 +4,22 @@ export function hasWorkspaceAccessToken() {
   return Boolean(localStorage.getItem("orbit.accessToken"));
 }
 
-export function useLiveResource<T>(preview: T, empty: T, loader: () => Promise<T>) {
-  const live = hasWorkspaceAccessToken();
+/**
+ * Loads a workspace resource from the API.
+ *
+ * There is no preview or demo branch. Every page shows what the server
+ * actually returns, an empty state, or an error. Substituting invented data
+ * when a request failed made a broken backend look like a working product and
+ * hid real failures from whoever was testing.
+ */
+export function useLiveResource<T>(empty: T, loader: () => Promise<T>) {
   const loaderRef = useRef(loader);
-  const previewRef = useRef(preview);
   loaderRef.current = loader;
-  previewRef.current = preview;
-  const [data, setData] = useState<T>(() => live ? empty : preview);
-  const [loading, setLoading] = useState(live);
+  const [data, setData] = useState<T>(empty);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
 
   const refresh = useCallback(async () => {
-    if (!live) {
-      setData(previewRef.current);
-      setError(undefined);
-      return previewRef.current;
-    }
     setLoading(true);
     setError(undefined);
     try {
@@ -33,12 +33,13 @@ export function useLiveResource<T>(preview: T, empty: T, loader: () => Promise<T
     } finally {
       setLoading(false);
     }
-  }, [live]);
+  }, []);
 
   useEffect(() => {
-    if (!live) return;
     void refresh().catch(() => undefined);
-  }, [live, refresh]);
+  }, [refresh]);
 
-  return { data, setData, loading, error, live, refresh };
+  // `live` is retained so existing call sites keep compiling; every session is
+  // live now, so it is always true.
+  return { data, setData, loading, error, live: true as const, refresh };
 }

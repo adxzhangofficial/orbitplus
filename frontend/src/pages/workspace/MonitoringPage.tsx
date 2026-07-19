@@ -4,7 +4,6 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { toast } from "sonner";
 import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
-import { metrics, servers as seedServers } from "@/lib/mock-data";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { relativeTime } from "@/lib/utils";
 import { buttonClass, controlClass, EmptyState, PageHeader, Panel, ProgressBar, Segmented, Stat, StatusBadge } from "./_shared";
@@ -14,14 +13,6 @@ type MonitorAlert = { id: string; title: string; server: string; metric: string;
 type MonitoringData = { servers: MonitorServer[]; alerts: MonitorAlert[] };
 type BackendMonitoring = { servers: Array<{ serverId: string; serverName: string; connectionStatus: string; status?: string; cpuPercent?: number | string; memoryPercent?: number | string; diskPercent?: number | string; latencyMs?: number | string; services?: unknown[]; sampledAt?: string }>; alerts: Array<{ id: string; serverId?: string; serverName?: string; severity: string; title: string; message: string; status: string; createdAt: string }> };
 
-const previewData: MonitoringData = {
-  servers: seedServers.map((server) => ({ id: server.id, name: server.name, status: server.status, cpu: server.cpu, memory: server.memory, disk: server.disk, latency: server.latency })),
-  alerts: [
-    { id: "al1", title: "Sustained CPU pressure", server: "Staging", metric: "CPU 81% for 10 minutes", severity: "critical", createdAt: new Date(Date.now() - 8 * 60_000).toISOString(), state: "open" },
-    { id: "al2", title: "Disk threshold approaching", server: "Analytics Worker", metric: "Disk usage reached 72%", severity: "warning", createdAt: new Date(Date.now() - 38 * 60_000).toISOString(), state: "open" },
-    { id: "al3", title: "Latency recovered", server: "Frontend Cluster", metric: "Latency returned below 75ms", severity: "success", createdAt: new Date(Date.now() - 2 * 3_600_000).toISOString(), state: "resolved" },
-  ],
-};
 
 function toMonitoring(input: BackendMonitoring): MonitoringData {
   return {
@@ -31,14 +22,13 @@ function toMonitoring(input: BackendMonitoring): MonitoringData {
 }
 
 export function MonitoringPage() {
-  const resource = useLiveResource(previewData, { servers: [], alerts: [] } as MonitoringData, async () => toMonitoring(await api.get<BackendMonitoring>("/monitoring")));
+  const resource = useLiveResource({ servers: [], alerts: [] } as MonitoringData, async () => toMonitoring(await api.get<BackendMonitoring>("/monitoring")));
   const { data, setData, live } = resource;
-  const [serverId, setServerId] = useState(seedServers[0].id);
+  const [serverId, setServerId] = useState("");
   const [range, setRange] = useState<"24h" | "7d" | "30d">("24h");
   const selected = data.servers.find((server) => server.id === serverId) ?? data.servers[0];
   const online = data.servers.filter((server) => ["online", "healthy"].includes(server.status)).length;
-  const previewChart = range === "24h" ? metrics : Array.from({ length: range === "7d" ? 7 : 30 }, (_, index) => ({ time: range === "7d" ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][index] : `${index + 1}`, cpu: 33 + (index * 13) % 37, memory: 49 + (index * 7) % 24, network: 24 + (index * 17) % 56 }));
-  const chartData = live && selected ? [{ time: selected.sampledAt ? new Date(selected.sampledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Latest", cpu: selected.cpu, memory: selected.memory, network: Math.min(100, selected.latency) }] : previewChart;
+  const chartData = selected ? [{ time: selected.sampledAt ? new Date(selected.sampledAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Latest", cpu: selected.cpu, memory: selected.memory, network: Math.min(100, selected.latency) }] : [];
 
   async function probe() {
     if (!selected) { toast.error("No server is available to probe"); return; }

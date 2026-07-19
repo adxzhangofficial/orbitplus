@@ -2,16 +2,12 @@ import { useMemo, useState } from "react";
 import { Building2, Download, ExternalLink, MoreHorizontal, Plus, Server, Shield, Users, WalletCards } from "lucide-react";
 import { toast } from "sonner";
 import { formatBytes, relativeTime } from "@/lib/utils";
-import { organizations as seedOrganizations } from "@/lib/mock-data";
 import { AdminDataNotice, adminApi, type AdminCustomer, type AdminCustomerDetail, unsupported, useAdminResource } from "./_api";
 import { AdminButton, AdminPageHeader, Avatar, DetailGrid, Drawer, IconAction, Pagination, ProgressBar, SearchBox, Stat, StatusPill, downloadCsv, usePagination } from "./_shared";
 
-const fallbackCustomers: AdminCustomer[] = seedOrganizations.map((item) => ({
-  id: item.id, name: item.name, slug: item.slug,
-  plan: item.plan.toLowerCase() as AdminCustomer["plan"],
-  status: item.status === "trial" || item.status === "past_due" ? "trialing" : item.status === "active" || item.status === "suspended" ? item.status : "cancelled",
-  members: item.members, workspaces: 1, servers: item.servers, backupBytes: 0, createdAt: item.joinedAt,
-}));
+// No fabricated tenants: an unauthenticated or failing admin API shows an
+// empty ledger rather than a fictional customer base.
+const fallbackCustomers: AdminCustomer[] = [];
 
 const planLabel = (plan: AdminCustomer["plan"]) => `${plan[0].toUpperCase()}${plan.slice(1)}`;
 

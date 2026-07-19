@@ -3,7 +3,6 @@ import { ArrowDownToLine, ArrowUpFromLine, Ban, Gauge, Pause, Play, Plus, Refres
 import { toast } from "sonner";
 import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
-import { servers as seedServers, transfers as seedTransfers } from "@/lib/mock-data";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { formatBytes, relativeTime } from "@/lib/utils";
 import type { Transfer } from "@/types";
@@ -17,14 +16,14 @@ function toTransfer(item: BackendTransfer): Transfer {
 }
 
 export function TransfersPage() {
-  const transfers = useLiveResource(seedTransfers, [] as Transfer[], async () => (await api.get<BackendTransfer[]>("/transfers?limit=100")).map(toTransfer));
-  const servers = useLiveResource(seedServers.map(({ id, name, rootPath }) => ({ id, name, rootPath })), [] as ServerOption[], () => api.get<ServerOption[]>("/servers?limit=100"));
+  const transfers = useLiveResource([] as Transfer[], async () => (await api.get<BackendTransfer[]>("/transfers?limit=100")).map(toTransfer));
+  const servers = useLiveResource([] as ServerOption[], () => api.get<ServerOption[]>("/servers?limit=100"));
   const { data: items, setData: setItems, live } = transfers;
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [paused, setPaused] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [draft, setDraft] = useState({ name: "", serverId: seedServers[0].id, direction: "upload" as Transfer["direction"], sourcePath: "/release.txt", destinationPath: "/release.txt", content: "" });
+  const [draft, setDraft] = useState({ name: "", serverId: "", direction: "upload" as Transfer["direction"], sourcePath: "/release.txt", destinationPath: "/release.txt", content: "" });
   const filtered = useMemo(() => items.filter((item) => (status === "all" || item.status === status) && `${item.name} ${item.server}`.toLowerCase().includes(query.toLowerCase())), [items, query, status]);
   const active = items.filter((item) => item.status === "running").length;
   const queued = items.filter((item) => item.status === "queued").length;

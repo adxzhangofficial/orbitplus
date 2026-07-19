@@ -3,7 +3,6 @@ import { KeyRound, MailPlus, SearchX, ShieldCheck, Trash2, UserPlus, Users, User
 import { toast } from "sonner";
 import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
-import { team as seedTeam } from "@/lib/mock-data";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { relativeTime } from "@/lib/utils";
 import type { Role, TeamMember } from "@/types";
@@ -20,7 +19,7 @@ function toTeamRows(data: BackendTeam): TeamRow[] {
 }
 
 export function TeamPage() {
-  const resource = useLiveResource(seedTeam as TeamRow[], [] as TeamRow[], async () => toTeamRows(await api.get<BackendTeam>("/team/members")));
+  const resource = useLiveResource([] as TeamRow[], async () => toTeamRows(await api.get<BackendTeam>("/team/members")));
   const { data: members, setData: setMembers, live } = resource;
   const [query, setQuery] = useState("");
   const [role, setRole] = useState("all");

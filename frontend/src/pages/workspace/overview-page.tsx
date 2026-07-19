@@ -6,7 +6,6 @@ import { PageHeader } from "@/components/page-header";
 import { Avatar, Badge, Button, Progress, StatusBadge } from "@/components/ui";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
-import { activities, backups, deployments, metrics, notifications, servers, transfers } from "@/lib/mock-data";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { cn, formatBytes, relativeTime } from "@/lib/utils";
 import type { ActivityEvent, Deployment, Notification, Server } from "@/types";
@@ -19,16 +18,6 @@ type BackendOverview = { organization: { name: string }; counts: Record<keyof Ov
 type BackendServer = { id: string; workspaceId: string; workspaceName?: string; name: string; host: string; port: number; username: string; rootPath: string; environment: Server["environment"]; adapterMode: string; status: string; lastCheckedAt?: string; lastLatencyMs?: number | string };
 type BackendMonitoring = { servers: Array<{ serverId: string; status?: string; cpuPercent?: number | string; memoryPercent?: number | string; diskPercent?: number | string; latencyMs?: number | string; sampledAt?: string }>; alerts: Array<{ id: string; title: string; message: string; severity: string; status: string; createdAt: string }> };
 
-const previewOverview: OverviewData = {
-  organizationName: "Acme Engineering",
-  counts: { workspaces: 2, servers: servers.length, members: 5, backups: backups.filter((item) => item.status === "complete").length, automations: 3, openAlerts: notifications.filter((item) => item.type === "critical" && !item.read).length },
-  transfers: { total: transfers.length, completed: transfers.filter((item) => item.status === "complete").length, failed: transfers.filter((item) => item.status === "failed").length, bytesTransferred: transfers.filter((item) => item.status === "complete").reduce((sum, item) => sum + item.bytes, 0) },
-  servers: servers.map((server) => ({ ...server, hasMetrics: true })),
-  recentActivity: activities,
-  recentDeployments: deployments,
-  alerts: notifications,
-  chart: metrics.map((item) => ({ time: item.time, average: Math.round((item.cpu + item.memory) / 2) })),
-};
 const emptyOverview: OverviewData = { organizationName: "Workspace", counts: { workspaces: 0, servers: 0, members: 0, backups: 0, automations: 0, openAlerts: 0 }, transfers: { total: 0, completed: 0, failed: 0, bytesTransferred: 0 }, servers: [], recentActivity: [], recentDeployments: [], alerts: [], chart: [] };
 function initials(name: string) { return name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "SY"; }
 function titleCase(value: string) { return value ? `${value[0].toUpperCase()}${value.slice(1)}` : value; }
@@ -51,7 +40,7 @@ async function loadOverview(): Promise<OverviewData> {
 
 export function OverviewPage() {
   const { user } = useAuth();
-  const resource = useLiveResource(previewOverview, emptyOverview, loadOverview);
+  const resource = useLiveResource(emptyOverview, loadOverview);
   const { data, live } = resource;
   const healthy = data.servers.filter((server) => server.status === "online").length;
   const activeAlert = data.alerts.find((notification) => notification.type === "critical" && !notification.read) ?? data.alerts.find((notification) => !notification.read);

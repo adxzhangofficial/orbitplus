@@ -1,18 +1,22 @@
-import { useEffect } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { RouteLoading } from "@/components/route-loading";
 import { useAuth } from "@/contexts/auth-context";
 
+/**
+ * Access is decided solely by whether a real session exists.
+ *
+ * These guards previously called enterDemo() when no session was present, so
+ * visiting the workspace silently fabricated a signed-in user. Every write then
+ * failed against the real API while the interface looked authenticated, which
+ * is what produced "demo preview sessions cannot reach or store server
+ * credentials" for people who had genuinely registered.
+ */
+
 export function RequireWorkspaceAccess() {
-  const { user, loading, demoEnabled, enterDemo } = useAuth();
+  const { user, loading } = useAuth();
   const location = useLocation();
-  const needsDemoIdentity = demoEnabled && (!user || user.role === "platform_admin");
 
-  useEffect(() => {
-    if (!loading && needsDemoIdentity) enterDemo("customer");
-  }, [enterDemo, loading, needsDemoIdentity]);
-
-  if (loading || needsDemoIdentity) return <RouteLoading />;
+  if (loading) return <RouteLoading />;
   if (!user) {
     return <Navigate to="/sign-in" replace state={{ from: `${location.pathname}${location.search}` }} />;
   }
@@ -21,15 +25,10 @@ export function RequireWorkspaceAccess() {
 }
 
 export function RequirePlatformAdmin() {
-  const { user, loading, isPlatformAdmin, demoEnabled, enterDemo } = useAuth();
+  const { user, loading, isPlatformAdmin } = useAuth();
   const location = useLocation();
-  const needsDemoIdentity = demoEnabled && !isPlatformAdmin;
 
-  useEffect(() => {
-    if (!loading && needsDemoIdentity) enterDemo("admin");
-  }, [enterDemo, loading, needsDemoIdentity]);
-
-  if (loading || needsDemoIdentity) return <RouteLoading />;
+  if (loading) return <RouteLoading />;
   if (!user) return <Navigate to="/sign-in" replace state={{ from: `${location.pathname}${location.search}` }} />;
   if (!isPlatformAdmin) return <Navigate to="/workspace" replace />;
   return <Outlet />;

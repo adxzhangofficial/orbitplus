@@ -31,7 +31,7 @@ function money(cents: number | string = 0, currency = "USD") { return new Intl.N
 function planTitle(plan?: string) { return plan ? `${plan[0].toUpperCase()}${plan.slice(1)}` : "No plan"; }
 
 export function BillingPage() {
-  const resource = useLiveResource(previewBilling, emptyBilling, () => api.get<BillingData>("/billing"));
+  const resource = useLiveResource(emptyBilling, () => api.get<BillingData>("/billing"));
   const { data, setData, live } = resource;
   const [interval, setInterval] = useState<"monthly" | "annual">("annual");
   const [coupon, setCoupon] = useState("");
