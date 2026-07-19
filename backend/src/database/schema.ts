@@ -40,6 +40,8 @@ export async function assertSchemaReady(): Promise<{ appliedMigrations: number; 
     servers: boolean;
     fileVersions: boolean;
     encryptedVersions: boolean;
+    authTokens: boolean;
+    sessions: boolean;
   }>(`SELECT
         to_regclass('public.users') IS NOT NULL AS users,
         to_regclass('public.organizations') IS NOT NULL AS organizations,
@@ -48,7 +50,9 @@ export async function assertSchemaReady(): Promise<{ appliedMigrations: number; 
         EXISTS (
           SELECT 1 FROM information_schema.columns
            WHERE table_schema = 'public' AND table_name = 'file_versions' AND column_name = 'content_ciphertext'
-        ) AS "encryptedVersions"`);
+        ) AS "encryptedVersions",
+        to_regclass('public.auth_tokens') IS NOT NULL AS "authTokens",
+        to_regclass('public.sessions') IS NOT NULL AS sessions`);
   const objects = requiredObjects.rows[0];
   if (!objects || Object.values(objects).some((exists) => !exists)) {
     throw new AppError(503, "SCHEMA_NOT_READY", "The database schema is incomplete");

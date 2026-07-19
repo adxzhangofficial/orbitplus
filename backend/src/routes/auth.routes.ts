@@ -2,18 +2,36 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { customAlphabet } from "nanoid";
 import { z } from "zod";
+import { env } from "../config/env.js";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
-import { conflict, unauthorized } from "../lib/errors.js";
+import { badRequest, conflict, notFound, unauthorized } from "../lib/errors.js";
 import { signAccessToken } from "../lib/jwt.js";
+import { routeParam } from "../lib/route-param.js";
 import { authenticate } from "../middleware/auth.js";
+import { consumeAuthToken, issueAuthToken } from "../services/auth-token.service.js";
+import {
+  sendPasswordChangedEmail,
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+} from "../services/email.service.js";
+import {
+  createSession,
+  listSessions,
+  revokeAllSessions,
+  revokeSession,
+  revokeSessionById,
+  rotateSession,
+} from "../services/session.service.js";
 
 const slugSuffix = customAlphabet("abcdefghjkmnpqrstuvwxyz23456789", 6);
+
+const passwordField = z.string().min(10).max(128);
 
 const registerSchema = z.object({
   name: z.string().trim().min(2).max(100),
   email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
-  password: z.string().min(10).max(128),
+  password: passwordField,
   organizationName: z.string().trim().min(2).max(100),
 });
 
@@ -21,6 +39,21 @@ const loginSchema = z.object({
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
   password: z.string().min(1).max(128),
 });
+
+const emailOnlySchema = z.object({
+  email: z.string().trim().email().max(254).transform((value) => value.toLowerCase()),
+});
+
+const tokenSchema = z.object({ token: z.string().min(10).max(500) });
+
+const resetSchema = tokenSchema.extend({ password: passwordField });
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: passwordField,
+});
+
+const refreshSchema = z.object({ refreshToken: z.string().min(10).max(500) });
 
 function slugify(value: string): string {
   const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
@@ -37,6 +70,9 @@ async function organizationsForUser(userId: string) {
   return result.rows;
 }
 
+const verificationTtlMs = () => env.EMAIL_VERIFICATION_TTL_HOURS * 3_600_000;
+const resetTtlMs = () => env.PASSWORD_RESET_TTL_MINUTES * 60_000;
+
 export const authRouter = Router();
 
 authRouter.post(
@@ -44,6 +80,9 @@ authRouter.post(
   asyncHandler(async (request, response) => {
     const input = registerSchema.parse(request.body);
     const client = await pool.connect();
+    let userId: string;
+    let user: { id: string; email: string; name: string; platform_role: "user" };
+    let organization: { id: string; name: string; slug: string; plan: string };
     try {
       await client.query("BEGIN");
       const existing = await client.query("SELECT 1 FROM users WHERE lower(email) = $1", [input.email]);
@@ -51,15 +90,16 @@ authRouter.post(
       const passwordHash = await bcrypt.hash(input.password, 12);
       const userResult = await client.query<{ id: string; email: string; name: string; platform_role: "user" }>(
         `INSERT INTO users(email, password_hash, name, email_verified)
-         VALUES($1, $2, $3, true) RETURNING id, email, name, platform_role`,
+         VALUES($1, $2, $3, false) RETURNING id, email, name, platform_role`,
         [input.email, passwordHash, input.name],
       );
-      const user = userResult.rows[0]!;
+      user = userResult.rows[0]!;
+      userId = user.id;
       const organizationResult = await client.query<{ id: string; name: string; slug: string; plan: string }>(
         `INSERT INTO organizations(name, slug, plan) VALUES($1, $2, 'free') RETURNING id, name, slug, plan`,
         [input.organizationName, slugify(input.organizationName)],
       );
-      const organization = organizationResult.rows[0]!;
+      organization = organizationResult.rows[0]!;
       await client.query(
         "INSERT INTO memberships(organization_id, user_id, role, status) VALUES($1, $2, 'owner', 'active')",
         [organization.id, user.id],
@@ -74,14 +114,25 @@ authRouter.post(
         [organization.id],
       );
       await client.query("COMMIT");
-      const token = signAccessToken({ sub: user.id, email: user.email, platformRole: "user" });
-      response.status(201).json({ data: { token, user, organizations: [{ ...organization, role: "owner" }] } });
     } catch (error) {
-      await client.query("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => undefined);
       throw error;
     } finally {
       client.release();
     }
+
+    const verificationToken = await issueAuthToken(userId, "email_verification", verificationTtlMs(), request);
+    await sendVerificationEmail(user.email, verificationToken, env.EMAIL_VERIFICATION_TTL_HOURS);
+    const token = signAccessToken({ sub: user.id, email: user.email, platformRole: "user" });
+    const refreshToken = await createSession(user.id, request);
+    response.status(201).json({
+      data: {
+        token,
+        refreshToken,
+        user: { ...user, emailVerified: false },
+        organizations: [{ ...organization, role: "owner" }],
+      },
+    });
   }),
 );
 
@@ -96,21 +147,162 @@ authRouter.post(
       password_hash: string;
       platform_role: "user" | "admin";
       active: boolean;
-    }>("SELECT id, email, name, password_hash, platform_role, active FROM users WHERE lower(email) = $1", [input.email]);
+      email_verified: boolean;
+    }>(
+      `SELECT id, email, name, password_hash, platform_role, active, email_verified
+         FROM users WHERE lower(email) = $1`,
+      [input.email],
+    );
     const user = result.rows[0];
     if (!user || !user.active || !(await bcrypt.compare(input.password, user.password_hash))) {
       throw unauthorized("Email or password is incorrect");
     }
     await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [user.id]);
     const token = signAccessToken({ sub: user.id, email: user.email, platformRole: user.platform_role });
+    const refreshToken = await createSession(user.id, request);
     const organizations = await organizationsForUser(user.id);
     response.json({
       data: {
         token,
-        user: { id: user.id, email: user.email, name: user.name, platformRole: user.platform_role },
+        refreshToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          platformRole: user.platform_role,
+          emailVerified: user.email_verified,
+        },
         organizations,
       },
     });
+  }),
+);
+
+authRouter.post(
+  "/refresh",
+  asyncHandler(async (request, response) => {
+    const input = refreshSchema.parse(request.body);
+    const { userId, token: refreshToken } = await rotateSession(input.refreshToken, request);
+    const result = await pool.query<{
+      id: string; email: string; name: string; platform_role: "user" | "admin"; active: boolean; email_verified: boolean;
+    }>(
+      "SELECT id, email, name, platform_role, active, email_verified FROM users WHERE id = $1",
+      [userId],
+    );
+    const user = result.rows[0];
+    if (!user?.active) throw unauthorized("This account is unavailable");
+    const token = signAccessToken({ sub: user.id, email: user.email, platformRole: user.platform_role });
+    response.json({
+      data: {
+        token,
+        refreshToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          platformRole: user.platform_role,
+          emailVerified: user.email_verified,
+        },
+      },
+    });
+  }),
+);
+
+/**
+ * Always reports success. Distinguishing a known from an unknown address here
+ * would turn this endpoint into an account-existence oracle.
+ */
+authRouter.post(
+  "/forgot-password",
+  asyncHandler(async (request, response) => {
+    const input = emailOnlySchema.parse(request.body);
+    const result = await pool.query<{ id: string; email: string }>(
+      "SELECT id, email FROM users WHERE lower(email) = $1 AND active = true",
+      [input.email],
+    );
+    const user = result.rows[0];
+    if (user) {
+      const token = await issueAuthToken(user.id, "password_reset", resetTtlMs(), request);
+      await sendPasswordResetEmail(user.email, token, env.PASSWORD_RESET_TTL_MINUTES);
+    }
+    response.json({
+      data: { message: "If an account exists for that address, a reset link has been sent." },
+    });
+  }),
+);
+
+authRouter.post(
+  "/reset-password",
+  asyncHandler(async (request, response) => {
+    const input = resetSchema.parse(request.body);
+    const userId = await consumeAuthToken(input.token, "password_reset");
+    if (!userId) throw badRequest("This reset link is invalid or has expired. Request a new one.");
+    const passwordHash = await bcrypt.hash(input.password, 12);
+    await pool.query(
+      "UPDATE users SET password_hash = $2, password_changed_at = now(), updated_at = now() WHERE id = $1",
+      [userId, passwordHash],
+    );
+    // A reset is the recovery path for a possibly compromised account, so every
+    // existing session is ended rather than only the requesting one.
+    await revokeAllSessions(userId, "password_reset");
+    const emailResult = await pool.query<{ email: string }>("SELECT email FROM users WHERE id = $1", [userId]);
+    if (emailResult.rows[0]) await sendPasswordChangedEmail(emailResult.rows[0].email);
+    response.json({ data: { message: "Your password has been updated. Sign in with your new password." } });
+  }),
+);
+
+authRouter.post(
+  "/verify-email",
+  asyncHandler(async (request, response) => {
+    const input = tokenSchema.parse(request.body);
+    const userId = await consumeAuthToken(input.token, "email_verification");
+    if (!userId) throw badRequest("This confirmation link is invalid or has expired. Request a new one.");
+    await pool.query("UPDATE users SET email_verified = true, updated_at = now() WHERE id = $1", [userId]);
+    response.json({ data: { message: "Your email address has been confirmed.", emailVerified: true } });
+  }),
+);
+
+authRouter.post(
+  "/resend-verification",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const result = await pool.query<{ email: string; email_verified: boolean }>(
+      "SELECT email, email_verified FROM users WHERE id = $1",
+      [request.auth!.userId],
+    );
+    const user = result.rows[0];
+    if (!user) throw notFound("User");
+    if (!user.email_verified) {
+      const token = await issueAuthToken(request.auth!.userId, "email_verification", verificationTtlMs(), request);
+      await sendVerificationEmail(user.email, token, env.EMAIL_VERIFICATION_TTL_HOURS);
+    }
+    response.json({ data: { message: "A confirmation email is on its way if your address is unverified." } });
+  }),
+);
+
+authRouter.post(
+  "/change-password",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const input = changePasswordSchema.parse(request.body);
+    const result = await pool.query<{ password_hash: string; email: string }>(
+      "SELECT password_hash, email FROM users WHERE id = $1",
+      [request.auth!.userId],
+    );
+    const user = result.rows[0];
+    if (!user || !(await bcrypt.compare(input.currentPassword, user.password_hash))) {
+      throw unauthorized("Your current password is incorrect");
+    }
+    const passwordHash = await bcrypt.hash(input.newPassword, 12);
+    await pool.query(
+      "UPDATE users SET password_hash = $2, password_changed_at = now(), updated_at = now() WHERE id = $1",
+      [request.auth!.userId, passwordHash],
+    );
+    // The caller keeps its own session; every other device is signed out.
+    const currentRefresh = typeof request.body?.refreshToken === "string" ? request.body.refreshToken : undefined;
+    await revokeAllSessions(request.auth!.userId, "password_changed", currentRefresh);
+    await sendPasswordChangedEmail(user.email);
+    response.json({ data: { message: "Your password has been updated." } });
   }),
 );
 
@@ -119,7 +311,9 @@ authRouter.get(
   authenticate,
   asyncHandler(async (request, response) => {
     const result = await pool.query(
-      "SELECT id, email, name, platform_role AS \"platformRole\", email_verified AS \"emailVerified\", last_login_at AS \"lastLoginAt\", created_at AS \"createdAt\" FROM users WHERE id = $1",
+      `SELECT id, email, name, platform_role AS "platformRole", email_verified AS "emailVerified",
+              mfa_enabled AS "mfaEnabled", last_login_at AS "lastLoginAt", created_at AS "createdAt"
+         FROM users WHERE id = $1`,
       [request.auth!.userId],
     );
     const organizations = await organizationsForUser(request.auth!.userId);
@@ -127,8 +321,31 @@ authRouter.get(
   }),
 );
 
-// Access tokens are stateless. This authenticated endpoint gives clients a
-// consistent logout contract; the client destroys its token after the 204.
-authRouter.post("/logout", authenticate, (_request, response) => {
-  response.status(204).send();
-});
+authRouter.get(
+  "/sessions",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const current = request.header("x-refresh-token") ?? undefined;
+    response.json({ data: await listSessions(request.auth!.userId, current) });
+  }),
+);
+
+authRouter.delete(
+  "/sessions/:id",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const revoked = await revokeSessionById(request.auth!.userId, routeParam(request, "id"));
+    if (!revoked) throw notFound("Session");
+    response.status(204).send();
+  }),
+);
+
+authRouter.post(
+  "/logout",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const refreshToken = typeof request.body?.refreshToken === "string" ? request.body.refreshToken : undefined;
+    if (refreshToken) await revokeSession(refreshToken);
+    response.status(204).send();
+  }),
+);

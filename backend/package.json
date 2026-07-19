@@ -9,6 +9,7 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "db:create-test": "node scripts/create-test-db.mjs",
     "db:migrate": "tsx src/database/migrate.ts",
     "db:migrate:production": "node dist/database/migrate.js",
     "db:seed": "tsx src/database/seed.ts"

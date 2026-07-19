@@ -12,7 +12,9 @@ export interface AccessTokenClaims {
 export function signAccessToken(claims: Omit<AccessTokenClaims, "type">): string {
   return jwt.sign({ ...claims, type: "access" }, env.JWT_SECRET, {
     algorithm: "HS256",
-    expiresIn: "8h",
+    // Short-lived by design; clients hold a rotating refresh token and call
+    // /auth/refresh. Revocation latency is bounded by this value.
+    expiresIn: env.ACCESS_TOKEN_TTL as jwt.SignOptions["expiresIn"],
     issuer: "orbit-api",
     audience: "orbit-workspace",
   });
