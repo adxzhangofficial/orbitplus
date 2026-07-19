@@ -1,12 +1,13 @@
 import { Router } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
-import { env } from "../config/env.js";
+import { appUrl, env } from "../config/env.js";
 import { withAdapter } from "../adapters/index.js";
 import { discoverHostFingerprint } from "../adapters/host-key.js";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { decryptJson, encryptJson } from "../lib/crypto.js";
+import { generateToken, hashToken } from "../lib/tokens.js";
 import { installOrbitKey } from "../services/key-provisioning.service.js";
 import { badRequest, conflict, notFound } from "../lib/errors.js";
 import { pagination, pageMeta } from "../lib/pagination.js";
@@ -213,6 +214,73 @@ serversRouter.post(
         message: "An Orbit key was installed and verified. The password is no longer stored, and future connections use the key.",
       },
     });
+  }),
+);
+
+/**
+ * Issues a single-use enrolment token and the command that installs the agent.
+ *
+ * The token is returned once and stored only as a hash, so it cannot be
+ * recovered later; re-running this replaces any outstanding one.
+ */
+serversRouter.post(
+  "/:id/agent/enroll",
+  requireRole("admin"),
+  asyncHandler(async (request, response) => {
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "id"));
+    const enrollmentToken = generateToken();
+
+    await pool.query(
+      `INSERT INTO server_agents(organization_id, server_id, enrollment_token_hash, enrollment_expires_at, status, created_by)
+       VALUES($1, $2, $3, now() + interval '1 hour', 'pending', $4)
+       ON CONFLICT (server_id) DO UPDATE SET
+         enrollment_token_hash = EXCLUDED.enrollment_token_hash,
+         enrollment_expires_at = EXCLUDED.enrollment_expires_at,
+         status = 'pending', agent_token_hash = NULL, updated_at = now()`,
+      [request.tenant!.organizationId, server.id, hashToken(enrollmentToken), request.auth!.userId],
+    );
+
+    response.status(201).json({
+      data: {
+        enrollmentToken,
+        expiresInMinutes: 60,
+        apiUrl: `${appUrl.replace(/\/$/, "")}/api/v1`,
+        // Run by the customer on their own machine. It is printed rather than
+        // executed by Orbit, so nothing is installed without them seeing it.
+        installCommand: `curl -fsSL ${appUrl.replace(/\/$/, "")}/api/v1/agent/install.sh | sudo ORBIT_API_URL="${appUrl.replace(/\/$/, "")}/api/v1" ORBIT_ENROLLMENT_TOKEN="${enrollmentToken}" bash`,
+      },
+    });
+  }),
+);
+
+/** Agent status, so the UI can show whether one is enrolled and reporting. */
+serversRouter.get(
+  "/:id/agent",
+  asyncHandler(async (request, response) => {
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "id"));
+    const result = await pool.query(
+      `SELECT status, hostname, platform, agent_version AS "agentVersion",
+              last_seen_at AS "lastSeenAt", last_report_at AS "lastReportAt",
+              reports_received AS "reportsReceived", report_interval_seconds AS "reportIntervalSeconds"
+         FROM server_agents WHERE server_id = $1`,
+      [server.id],
+    );
+    response.json({ data: result.rows[0] ?? { status: "none" } });
+  }),
+);
+
+serversRouter.delete(
+  "/:id/agent",
+  requireRole("admin"),
+  asyncHandler(async (request, response) => {
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "id"));
+    // Revoked rather than deleted, so a still-running agent's token stops
+    // working immediately and its reports are refused.
+    await pool.query(
+      "UPDATE server_agents SET status = 'revoked', agent_token_hash = NULL, enrollment_token_hash = NULL, updated_at = now() WHERE server_id = $1",
+      [server.id],
+    );
+    response.status(204).send();
   }),
 );
 

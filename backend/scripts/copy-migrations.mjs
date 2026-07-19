@@ -1,3 +1,4 @@
+// Also copies the agent install script, which is served verbatim at runtime.
 import { copyFile, mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,3 +12,11 @@ if (migrations.length === 0) throw new Error("No SQL migrations were found to pa
 await mkdir(outputDirectory, { recursive: true });
 await Promise.all(migrations.map((file) => copyFile(path.join(sourceDirectory, file), path.join(outputDirectory, file))));
 console.log(`Packaged ${migrations.length} database migrations`);
+
+import { cp as _cp, mkdir as _mkdir } from "node:fs/promises";
+import { fileURLToPath as _f } from "node:url";
+const _src = _f(new URL("../src/agent", import.meta.url));
+const _dst = _f(new URL("../dist/agent", import.meta.url));
+await _mkdir(_dst, { recursive: true });
+await _cp(_src, _dst, { recursive: true });
+console.log("Packaged agent install script");

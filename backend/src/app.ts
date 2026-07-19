@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { env } from "./config/env.js";
 import { activityRouter } from "./routes/activity.routes.js";
 import { adminRouter } from "./routes/admin.routes.js";
+import { agentRouter } from "./routes/agent.routes.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { automationsRouter } from "./routes/automations.routes.js";
 import { backupsRouter } from "./routes/backups.routes.js";
@@ -53,6 +54,8 @@ export function createApp() {
   const api = Router();
   api.use(healthRouter);
   api.use(plansRouter);
+  // Machine-authenticated: agents present their own token, not a user session.
+  api.use("/agent", agentRouter);
   api.use("/auth", rateLimit({ windowMs: 60_000, limit: env.NODE_ENV === "test" ? 1_000 : 20, standardHeaders: "draft-8", legacyHeaders: false }), authRouter);
 
   const customer = Router();
