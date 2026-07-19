@@ -112,6 +112,9 @@ export interface AdminFeatureFlag {
   name: string;
   description: string;
   enabled: boolean;
+  stagingEnabled: boolean;
+  owner: string;
+  risk: "low" | "medium" | "high";
   rolloutPercent: number;
   enabledOrganizations: string[];
   disabledOrganizations: string[];
@@ -122,6 +125,9 @@ export interface FeatureFlagInput {
   name: string;
   description?: string;
   enabled?: boolean;
+  stagingEnabled?: boolean;
+  owner?: string;
+  risk?: "low" | "medium" | "high";
   rolloutPercent?: number;
   enabledOrganizations?: string[];
   disabledOrganizations?: string[];
@@ -133,17 +139,39 @@ export interface AdminTicket {
   status: "open" | "pending" | "resolved" | "closed";
   priority: "low" | "normal" | "high" | "urgent";
   createdAt: string;
+  updatedAt: string;
+  resolvedAt: string | null;
+  organizationId: string | null;
   organizationName: string | null;
   plan: string | null;
   openedByName: string | null;
+  assignedToId: string | null;
   assignedToName: string | null;
   messageCount: number;
+  /** First-response clock, computed server-side from the SLA policy. */
+  sla: { remainingMinutes: number; met: boolean; targetMinutes: number };
 }
 
 export interface AdminTicketDetail extends AdminTicket {
   body: string;
-  organizationId: string | null;
-  messages: Array<{ id: number; body: string; authorRole: "customer" | "operator"; authorName: string | null; createdAt: string }>;
+  messages: Array<{ id: number; body: string; authorRole: "customer" | "operator" | "internal"; authorName: string | null; createdAt: string }>;
+}
+
+export interface AdminOperator {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface AdminSupportMetrics {
+  open: number;
+  pending: number;
+  resolved: number;
+  /** null until at least one ticket has been answered. */
+  medianFirstResponseMinutes: number | null;
+  slaAttainmentPercent: number | null;
+  sampleSize: number;
+  week: { resolved: number; reopened: number; escalated: number };
 }
 
 export interface AdminQueue {
@@ -189,7 +217,14 @@ export const adminApi = {
 
   tickets: (status?: string) => api.get<AdminTicket[]>(`/admin/support/tickets${status ? `?status=${status}` : ""}`),
   ticket: (id: string) => api.get<AdminTicketDetail>(`/admin/support/tickets/${encodeURIComponent(id)}`),
-  replyToTicket: (id: string, body: string, status?: string) => api.post(`/admin/support/tickets/${encodeURIComponent(id)}/reply`, { body, status }),
+  replyToTicket: (id: string, body: string, options: { status?: string; internal?: boolean } = {}) =>
+    api.post(`/admin/support/tickets/${encodeURIComponent(id)}/reply`, { body, ...options }),
+  createTicket: (input: { organizationId: string; subject: string; body: string; priority: string }) =>
+    api.post<{ id: string }>("/admin/support/tickets", input),
+  updateTicket: (id: string, input: { assignedTo?: string | null; priority?: string; status?: string }) =>
+    api.patch(`/admin/support/tickets/${encodeURIComponent(id)}`, input),
+  operators: () => api.get<AdminOperator[]>("/admin/support/operators"),
+  supportMetrics: () => api.get<AdminSupportMetrics>("/admin/support/metrics"),
 
   jobs: () => api.get<AdminQueue[]>("/admin/jobs"),
   platformAudit: (action?: string) => api.get<PlatformAuditEntry[]>(`/admin/platform-audit${action ? `?action=${action}` : ""}`),
@@ -248,4 +283,70 @@ export function LiveSignal({ source }: { source: AdminDataSource }) {
 
 export function unsupported(action: string) {
   toast.info(`${action} is not supported by the current API`, { description: "No server-side change was made." });
+}
+
+/**
+ * Adapters from the API's shape to the shape these pages already render.
+ *
+ * The admin pages were written against local types with fields the backend does
+ * not have. Mapping here rather than rewriting the pages keeps their layout and
+ * markup untouched, and makes the fields the API genuinely cannot supply
+ * explicit instead of quietly invented.
+ */
+
+export function toPageFeatureFlag(flag: AdminFeatureFlag) {
+  return {
+    id: flag.key,
+    key: flag.key,
+    name: flag.name,
+    description: flag.description,
+    owner: flag.owner,
+    production: flag.enabled,
+    staging: flag.stagingEnabled,
+    rollout: flag.rolloutPercent,
+    targets: flag.enabledOrganizations.length + flag.disabledOrganizations.length,
+    updatedAt: flag.updatedAt,
+    risk: flag.risk,
+    enabledOrganizations: flag.enabledOrganizations,
+    disabledOrganizations: flag.disabledOrganizations,
+  };
+}
+
+/** The reverse: what the page holds, in the shape the PUT endpoint accepts. */
+export function toFlagInput(flag: ReturnType<typeof toPageFeatureFlag>): FeatureFlagInput {
+  return {
+    name: flag.name,
+    description: flag.description,
+    enabled: flag.production,
+    stagingEnabled: flag.staging,
+    owner: flag.owner,
+    risk: flag.risk,
+    rolloutPercent: flag.rollout,
+    enabledOrganizations: flag.enabledOrganizations,
+    disabledOrganizations: flag.disabledOrganizations,
+  };
+}
+
+export function toPageTicket(ticket: AdminTicket) {
+  const planLabel = ticket.plan ? `${ticket.plan[0]?.toUpperCase()}${ticket.plan.slice(1)}` : "Free";
+  return {
+    id: ticket.id,
+    subject: ticket.subject,
+    customer: ticket.organizationName ?? "Unknown",
+    organizationId: ticket.organizationId,
+    plan: (["Free", "Pro", "Enterprise"].includes(planLabel) ? planLabel : "Free") as "Free" | "Pro" | "Enterprise",
+    priority: ticket.priority,
+    // The page has no "resolved" state, and closed is the nearest truthful
+    // equivalent for a ticket that needs no further action.
+    status: (ticket.status === "resolved" ? "closed" : ticket.status) as "open" | "pending" | "closed",
+    assignee: ticket.assignedToName ?? "Unassigned",
+    assignedToId: ticket.assignedToId,
+    updatedAt: ticket.updatedAt,
+    // Minutes until the first-response target. Already met, or answered, reads
+    // as zero remaining rather than a countdown that no longer applies.
+    slaMinutes: ticket.sla.met ? 0 : Math.max(0, ticket.sla.remainingMinutes),
+    slaBreached: !ticket.sla.met && ticket.sla.remainingMinutes <= 0,
+    channel: "Portal",
+    messages: ticket.messageCount,
+  };
 }

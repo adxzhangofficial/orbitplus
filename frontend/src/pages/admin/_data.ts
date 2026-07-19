@@ -84,6 +84,7 @@ export interface SupportTicket {
   id: string; subject: string; customer: string; plan: "Free" | "Pro" | "Enterprise";
   priority: "urgent" | "high" | "normal" | "low"; status: "open" | "pending" | "closed";
   assignee: string; updatedAt: string; slaMinutes: number; channel: string; messages: number;
+  organizationId: string | null; assignedToId: string | null; slaBreached: boolean;
 }
 export const supportTickets: SupportTicket[] = [];
 
@@ -91,6 +92,7 @@ export interface FeatureFlag {
   id: string; key: string; name: string; description: string; owner: string;
   production: boolean; staging: boolean; rollout: number; targets: number;
   updatedAt: string; risk: "low" | "medium" | "high";
+  enabledOrganizations: string[]; disabledOrganizations: string[];
 }
 export const featureFlags: FeatureFlag[] = [];
 

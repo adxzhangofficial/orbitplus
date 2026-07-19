@@ -21,7 +21,7 @@ let adminUserId = "";
 
 const unique = () => `${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
-function admin(method: "get" | "post" | "put" | "delete", path: string) {
+function admin(method: "get" | "post" | "put" | "patch" | "delete", path: string) {
   return request(app)[method](path).set("authorization", `Bearer ${adminToken}`);
 }
 

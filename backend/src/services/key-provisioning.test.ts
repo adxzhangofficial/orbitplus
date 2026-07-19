@@ -1,8 +1,18 @@
 import { generateKeyPairSync } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { Server, utils } from "ssh2";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { generateOrbitKeyPair } from "./key-provisioning.service.js";
+
+// The fake sshd below listens on loopback, and installOrbitKey goes through the
+// egress policy, which refuses loopback unless this is set. The environment is
+// parsed once when the service module loads, so this has to run before the
+// imports above — hence vi.hoisted rather than a plain assignment, which the
+// import hoisting would leave stranded after the module had already read it.
+//
+// Without this the test passes only when some earlier file in the same worker
+// happened to set the variable, which is not a property a test should have.
+vi.hoisted(() => { process.env.SFTP_ALLOW_LOOPBACK = "true"; });
 
 /**
  * The generated public key has to be something sshd will actually accept, which
