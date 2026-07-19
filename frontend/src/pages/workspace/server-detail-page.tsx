@@ -124,7 +124,7 @@ function ServerDetail({ server }: { server: Server }) {
 
   useEffect(() => {
     let active = true;
-    api.get<Array<{ name: string; type: string }>>(`/servers/${server.id}/files?path=%2F`)
+    api.get<Array<{ name: string; type: string }>>(`/servers/${server.id}/files?path=%2F&indexOnly=true`)
       .then((entries) => {
         if (!active) return;
         setRecentFiles(entries.filter((entry) => entry.type === "file").slice(0, 4).map((entry) => entry.name));

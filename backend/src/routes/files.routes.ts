@@ -43,6 +43,15 @@ const listQuery = pathQuery.extend({
   prefetch: z.coerce.number().int().min(0).max(1).default(1),
   /** Bypasses the cache for an explicit refresh. */
   fresh: z.coerce.boolean().default(false),
+  /**
+   * Answers only from cache or the index, never by opening a connection.
+   *
+   * For incidental panels that show a few filenames alongside other content.
+   * Without this, a summary widget on an unrelated page opens an SSH
+   * connection and, against an unreachable host, blocks for the full connect
+   * timeout on every render.
+   */
+  indexOnly: z.coerce.boolean().default(false),
 });
 
 filesRouter.get(
@@ -75,6 +84,14 @@ filesRouter.get(
         });
         return;
       }
+    }
+
+    if (query.indexOnly) {
+      // Nothing cached and no index yet. An empty listing is the honest answer
+      // for a panel that must not hold a connection open.
+      response.setHeader("x-orbit-cache", "empty");
+      response.json({ data: [], meta: { path, count: 0, cached: false, source: "index", pending: true } });
+      return;
     }
 
     const result = await withAdapter(server, (adapter) =>
