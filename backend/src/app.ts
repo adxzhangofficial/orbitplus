@@ -26,6 +26,7 @@ import { plansRouter } from "./routes/plans.routes.js";
 import { profileRouter } from "./routes/profile.routes.js";
 import { runbooksRouter } from "./routes/runbooks.routes.js";
 import { serversRouter } from "./routes/servers.routes.js";
+import { statusRouter } from "./routes/status.routes.js";
 import { teamRouter } from "./routes/team.routes.js";
 import { terminalRouter } from "./routes/terminal.routes.js";
 import { transfersRouter } from "./routes/transfers.routes.js";
@@ -59,6 +60,7 @@ export function createApp() {
   const api = Router();
   api.use(healthRouter);
   api.use(plansRouter);
+  api.use(statusRouter);
   // Machine-authenticated: agents present their own token, not a user session.
   api.use("/agent", agentRouter);
   api.use("/auth", rateLimit({ windowMs: 60_000, limit: env.NODE_ENV === "test" ? 1_000 : 20, standardHeaders: "draft-8", legacyHeaders: false }), authRouter);

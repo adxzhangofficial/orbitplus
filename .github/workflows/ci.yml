@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A newer push supersedes an in-flight run on the same branch. Only main is
+# exempt, because its runs record whether a released commit was green.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  verify:
+    name: Typecheck, build, and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: orbit
+          POSTGRES_PASSWORD: orbit
+          POSTGRES_DB: orbit_test
+        ports: ["5432:5432"]
+        # Steps start before Postgres is accepting connections otherwise, and
+        # the first migration fails on a race rather than on a real problem.
+        options: >-
+          --health-cmd "pg_isready -U orbit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      TEST_DATABASE_URL: postgresql://orbit:orbit@127.0.0.1:5432/orbit_test
+      DATABASE_URL: postgresql://orbit:orbit@127.0.0.1:5432/orbit_test
+      # Values a test run needs to boot. None are real credentials; the
+      # encryption key is a throwaway generated for this job only.
+      JWT_SECRET: ci-only-secret-value-at-least-32-chars
+      CREDENTIAL_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      ALLOW_DEVELOPMENT_SEED: "true"
+      SEED_DATABASE_NAME: orbit_test
+      # Suites start SSH and HTTP servers on loopback to exercise the real
+      # paths, which the egress policy refuses by default.
+      SFTP_ALLOW_LOOPBACK: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Apply migrations
+        run: npm run db:migrate -w backend
+
+      - name: Backend tests
+        run: npm run test -w backend
+
+      - name: Frontend tests
+        run: npm run test -w frontend
+
+      # Last, because a type error or failing test is the more useful signal
+      # and should surface before a bundling problem.
+      - name: Build
+        run: npm run build
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      # Fails only on high and critical. Lower severities are reported without
+      # blocking, so the gate stays meaningful rather than being routinely
+      # overridden.
+      - run: npm audit --audit-level=high

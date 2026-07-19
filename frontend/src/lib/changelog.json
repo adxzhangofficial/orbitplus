@@ -1,0 +1,173 @@
+{
+  "generatedAt": "2026-07-19T13:58:01.569Z",
+  "entries": [
+    {
+      "hash": "b1cc193",
+      "date": "2026-07-19T21:40:51+08:00",
+      "title": "Implement runbooks, and unify the workspace theme",
+      "summary": "Two parallel component libraries had grown up in the interface. The overview, servers, and file explorer used the semantic tokens in components/ui, while the other fourteen workspace pages used _shared.tsx with hardcoded indigo and zinc values. They rendered as two visibly different products: different accent colour, panel background, border treatment, and heading font. _shared now resolves every surface through the same tokens, so all seventeen pages match and a future theme change moves them together rather than splitting them again. Stat tiles default to neutral, keeping colour for states that mean something."
+    },
+    {
+      "hash": "f3f2566",
+      "date": "2026-07-19T21:26:50+08:00",
+      "title": "Deliver events to Slack, Discord, and webhooks",
+      "summary": "The integrations page listed well-known products with Connect buttons that toggled local state. Nothing was stored and no event ever left the application, so a failed nightly backup sat unread in a notifications list while the person who needed to know was somewhere else."
+    },
+    {
+      "hash": "fc57d99",
+      "date": "2026-07-19T21:09:11+08:00",
+      "title": "Make settings persist, and enforce the policies they describe",
+      "summary": "Profile, workspace, and security settings rendered editable fields, accepted input, and reported \"saved\" without sending anything. Reloading restored the old values. The workspace policy toggles were the worst of it: a workspace could appear to require host-key pinning while the API accepted unpinned connections, so a control that read as governance enforced nothing."
+    },
+    {
+      "hash": "b5ee88e",
+      "date": "2026-07-19T20:51:15+08:00",
+      "title": "Make API keys real",
+      "summary": "The API keys page generated a key in the browser with crypto.randomUUID, showed it once, and stored nothing. The value it displayed authenticated nothing, so anyone who followed the page's own instructions and put it in a CI pipeline got 401s from a credential the product had told them was live. The list beneath it was three invented rows."
+    },
+    {
+      "hash": "55716a3",
+      "date": "2026-07-19T20:38:00+08:00",
+      "title": "Implement the web terminal",
+      "summary": "The page was a hardcoded map of command strings: pwd printed /var/www/api and anything else printed \"Process exited with code 0\". Nothing ever reached a server, which invites someone to believe a command ran on their production host."
+    },
+    {
+      "hash": "93a461b",
+      "date": "2026-07-19T20:18:39+08:00",
+      "title": "Show connection progress step by step, and expose agent state",
+      "summary": "Saving a connection ran four requests in sequence and rendered nothing until the last settled, so a flow that legitimately takes ten seconds or more looked frozen and then produced a toast out of nowhere. Each stage is now announced before it runs and resolved as it finishes: preparing the workspace, saving and encrypting credentials, verifying the connection, installing the agent, and indexing the file tree. A failure points at the stage that actually failed rather than at \"save\"."
+    },
+    {
+      "hash": "a9d4d8d",
+      "date": "2026-07-19T19:54:57+08:00",
+      "title": "Say why the agent cannot enrol instead of failing generically",
+      "summary": "Agent installs were failing with \"the agent could not be installed\", which hides the actual cause and made it look like a broken script."
+    },
+    {
+      "hash": "f8a023e",
+      "date": "2026-07-19T19:35:32+08:00",
+      "title": "Show real connection state and stop claiming unmeasured resources are zero",
+      "summary": "The overview still reported CPU, RAM, and disk at 0% for a server nothing had measured. Its cards keyed off a single hasMetrics flag that was true whenever any sample existed, including a latency-only SFTP probe that carries no resource readings at all, so \"we have a sample\" was treated as \"we have every metric\"."
+    },
+    {
+      "hash": "593fd80",
+      "date": "2026-07-19T19:29:06+08:00",
+      "title": "Stop incidental panels from opening SSH connections",
+      "summary": "The server overview page fetched a directory listing to populate a four-item \"recent files\" panel. Against an unreachable host that meant an eight second connect timeout, repeated on every mount and again under React's development double-invoke, which produced a stream of 502s and then 503s once the breaker opened. A summary widget was holding SSH connections open."
+    },
+    {
+      "hash": "fe4466e",
+      "date": "2026-07-19T19:22:15+08:00",
+      "title": "Never refuse a connection the user explicitly asked for",
+      "summary": "Testing a connection returned 502 on the first attempt and then 503 on every retry: the circuit breaker had opened and was declining to try at all. Backing off is right for background work, but someone who just pressed \"Test connection\" is asking for an attempt, and answering \"we chose not to\" is not a useful result. The same applied to \"Probe now\"."
+    },
+    {
+      "hash": "5f85365",
+      "date": "2026-07-19T19:13:51+08:00",
+      "title": "Install the agent when a server is connected, and keep readings live",
+      "summary": "Two reasons every server showed 0% and a frozen latency."
+    },
+    {
+      "hash": "d7f043d",
+      "date": "2026-07-19T18:57:59+08:00",
+      "title": "Stop reporting unmeasured resources as zero",
+      "summary": "Every server showed CPU, memory, and disk at 0%, which reads as a machine sitting perfectly idle. Nothing had been measured at all."
+    },
+    {
+      "hash": "9ae423d",
+      "date": "2026-07-19T18:48:02+08:00",
+      "title": "Add a read-only server agent that pushes data outbound",
+      "summary": "Every path so far had Orbit connecting inward to the customer's server, which fails whenever a firewall, NAT, or filtering proxy sits between them. That is not hypothetical: the SSH handshake from this development machine to a real server is being dropped by the network in front of it, and no amount of work on the connection logic can fix that from Orbit's side."
+    },
+    {
+      "hash": "508b0ee",
+      "date": "2026-07-19T18:36:00+08:00",
+      "title": "Keep SFTP connections alive and never hand out a dead one",
+      "summary": "Pooled connections had no keepalive, so NAT, a firewall, or sshd's own ClientAliveInterval would drop them while they sat in the pool. Nothing noticed until the next request tried to use one and failed, which looks to the user like the app randomly breaking. Traffic every 15 seconds now holds the session open for as long as it is pooled."
+    },
+    {
+      "hash": "64120aa",
+      "date": "2026-07-19T18:27:32+08:00",
+      "title": "Start the job worker with npm run dev",
+      "summary": "The dev script started only the API and the web app. Every queued action — transfers, backups, scheduled automations, remote tree indexing — was therefore accepted and then never executed, because nothing was consuming the queue. The worker is a required part of running this application, not an optional extra, so it now starts alongside the other two."
+    },
+    {
+      "hash": "c0b4760",
+      "date": "2026-07-19T17:01:40+08:00",
+      "title": "Remove demo mode and every fabricated dataset from the workspace",
+      "summary": "Registering a real account and opening the workspace produced \"Demo preview sessions cannot reach or store server credentials\" when trying to add a server. The cause was not a permission check. RequireWorkspaceAccess called enterDemo() whenever no session was present, and demo mode was unconditionally enabled in development, so visiting the workspace fabricated a signed-in user with no access token. The interface looked authenticated while every write failed against the real API."
+    },
+    {
+      "hash": "8839e88",
+      "date": "2026-07-19T16:39:10+08:00",
+      "title": "Index the remote tree in one round trip so browsing is instant",
+      "summary": "SFTP costs one round trip per directory. Measured against a real server with about a second of latency, a single listing took 11 to 12 seconds while the database record behind it came back in 5 milliseconds. Walking a tree of five hundred directories that way is over eight minutes of waiting, so no amount of caching after the fact makes browsing feel like a file manager: the first visit to every folder is always slow."
+    },
+    {
+      "hash": "d5d761a",
+      "date": "2026-07-19T14:08:54+08:00",
+      "title": "Make browsing feel local: shared listing cache and same-trip prefetch",
+      "summary": "Measured the round-trip time to the server under test: 1017ms. One network round trip takes a full second, so a listing can never be faster than that however it is fetched, and the connection pooling from the previous change had already brought it to roughly that floor. The remaining latency is not work the server is doing, it is distance."
+    },
+    {
+      "hash": "6e34dd5",
+      "date": "2026-07-19T13:55:10+08:00",
+      "title": "Pool SFTP connections and fail fast on unreachable servers",
+      "summary": "Browsing was unusable. Every directory listing opened a fresh SSH connection, did one readdir, and tore it down, so each click paid a full TCP and SSH handshake. Measured against a real server, a listing took 11 to 12 seconds while the server record itself came from the database in 5 milliseconds. The handshake was the entire cost."
+    },
+    {
+      "hash": "7dc5f45",
+      "date": "2026-07-19T13:37:12+08:00",
+      "title": "File explorer: real directory navigation, versions, upload, download, delete",
+      "summary": "The explorer listed the server root once and then stopped being connected to anything. The folder sidebar was a fixed sample of names, the breadcrumbs were hardcoded to root/var/www/api, version history was four invented entries, opening a directory showed a toast instead of entering it, opening a file that was not server.ts substituted invented content, and delete only removed the row from local state while leaving the file on the server."
+    },
+    {
+      "hash": "59c8170",
+      "date": "2026-07-19T13:28:43+08:00",
+      "title": "Stop asking for a host key: record it on first connection instead",
+      "summary": "Connecting a server required a pinned fingerprint before the connection was allowed at all, which is stricter than OpenSSH. `ssh user@host` does not refuse an unknown host; it accepts the key on first contact, records it, and verifies every connection afterwards. Orbit demanded the value up front, which only pushed the user to fetch it by hand and paste it back: the same trust decision with more steps and a wall in front of it."
+    },
+    {
+      "hash": "28cb15d",
+      "date": "2026-07-19T13:24:42+08:00",
+      "title": "Install an Orbit SSH key automatically, and stop asking about host keys",
+      "summary": "Two problems with connecting a server."
+    },
+    {
+      "hash": "19c38ae",
+      "date": "2026-07-19T12:32:43+08:00",
+      "title": "Retrieve SSH host keys automatically instead of demanding a pasted fingerprint",
+      "summary": "Connecting a server required pasting a SHA-256 host fingerprint obtained \"through a trusted channel\", which in practice means SSHing in and running ssh-keyscan by hand. Almost nobody does that, so the first real step of the product was a wall."
+    },
+    {
+      "hash": "af943a4",
+      "date": "2026-07-19T12:06:57+08:00",
+      "title": "Phase 4: real billing, plan limits, and usage metering",
+      "summary": "PATCH /billing/plan wrote the new plan straight to the database, so any owner could grant their organization the Pro plan by calling the API. There was no payment processor, no invoice generation, and no measurement of the resources a plan is supposed to limit."
+    },
+    {
+      "hash": "288a895",
+      "date": "2026-07-19T11:57:57+08:00",
+      "title": "Phase 3: durable job queue, real workers, working automation scheduler",
+      "summary": "Transfers executed inline inside the HTTP request, so a transfer against a slow or unreachable server held the connection open until it finished or timed out, and a failure left no way to retry. Automations were worse: /run stamped last_run_at, returned \"accepted\", and executed nothing. node-cron was a declared dependency that nothing imported, so no schedule had ever fired."
+    },
+    {
+      "hash": "f675098",
+      "date": "2026-07-19T11:48:03+08:00",
+      "title": "Phase 2: content-addressed version storage, uploads, and retention",
+      "summary": "Version history stored a full encrypted copy per version, so fifty saves of a one megabyte file cost fifty megabytes even when the bytes never changed. Payloads now live once per (organization, checksum) in file_blobs and versions reference them, so history costs the size of the distinct contents rather than the number of versions."
+    },
+    {
+      "hash": "787a044",
+      "date": "2026-07-19T11:26:35+08:00",
+      "title": "Phase 1: complete the authentication lifecycle",
+      "summary": "Registration and login worked, but password reset, email verification, and session revocation did not exist. The three recovery pages were local state only: forgot-password ran setSent(true) and never called an API, and registration set email_verified to true without sending anything."
+    },
+    {
+      "hash": "f51d14b",
+      "date": "2026-07-19T11:01:07+08:00",
+      "title": "Baseline: Orbit+ server workspace",
+      "summary": "Existing full-stack application imported into version control for the first time, with the backend build repaired so the tree compiles from a clean state."
+    }
+  ]
+}
