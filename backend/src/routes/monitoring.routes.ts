@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { withAdapter } from "../adapters/index.js";
+import { withAdapter, withDirectAdapter } from "../adapters/index.js";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { notFound } from "../lib/errors.js";
@@ -61,7 +61,7 @@ monitoringRouter.post(
     const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
     let health: { ok: boolean; latencyMs: number; message: string };
     try {
-      health = await withAdapter(server, (adapter) => adapter.health());
+      health = await withDirectAdapter(server, (adapter) => adapter.health());
     } catch (error) {
       health = { ok: false, latencyMs: 0, message: error instanceof Error ? error.message : "Probe failed" };
     }

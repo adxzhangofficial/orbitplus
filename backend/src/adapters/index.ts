@@ -32,6 +32,30 @@ async function recordCapturedFingerprint(server: ServerConnectionRecord, adapter
   adapter.capturedFingerprint = null;
 }
 
+/**
+ * Runs one operation against a server without touching the pool or the circuit
+ * breaker.
+ *
+ * Used for anything the user explicitly asked for right now: testing an
+ * unsaved connection, or pressing "probe". Those must actually attempt the
+ * connection. Backing off is correct for background work, but telling someone
+ * who just clicked "Test connection" that we declined to try is not a useful
+ * answer, and a preflight for a server that does not exist yet has nothing
+ * worth pooling.
+ */
+export async function withDirectAdapter<T>(
+  server: ServerConnectionRecord,
+  operation: (adapter: RemoteFilesystem) => Promise<T>,
+): Promise<T> {
+  const adapter = adapterFor(server);
+  await adapter.connect();
+  try {
+    return await operation(adapter);
+  } finally {
+    await adapter.disconnect().catch(() => undefined);
+  }
+}
+
 export async function withAdapter<T>(
   server: ServerConnectionRecord,
   operation: (adapter: RemoteFilesystem) => Promise<T>,

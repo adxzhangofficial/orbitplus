@@ -2,7 +2,7 @@ import { Router } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
 import { appUrl, env } from "../config/env.js";
-import { withAdapter } from "../adapters/index.js";
+import { withAdapter, withDirectAdapter } from "../adapters/index.js";
 import { discoverHostFingerprint } from "../adapters/host-key.js";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
@@ -307,7 +307,7 @@ serversRouter.post(
       host_fingerprint: input.hostFingerprint ?? null,
       settings: input.settings,
     } as const;
-    const health = await withAdapter(transientServer, (adapter) => adapter.health());
+    const health = await withDirectAdapter(transientServer, (adapter) => adapter.health());
     response.json({ data: { ...health, fingerprintVerified: true } });
   }),
 );
