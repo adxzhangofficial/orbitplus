@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.vite/
+coverage/
+*.log
+.DS_Store
+*.tsbuildinfo
+
+# Secrets. Only .env.example is tracked. Patterns are wildcarded so a new
+# .env in any future package is ignored by default rather than by memory.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Runtime data
+backend/storage/
+backend/uploads/
+!.gitkeep
