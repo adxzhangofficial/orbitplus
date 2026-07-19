@@ -7,6 +7,7 @@ import { pool } from "../database/pool.js";
 import { decryptJson } from "../lib/crypto.js";
 import { hashToken } from "../lib/tokens.js";
 import type { ServerConnectionRecord, ServerCredentials } from "../adapters/remote-filesystem.js";
+import { logger } from "../lib/logger.js";
 
 const { Client } = ssh2;
 
@@ -215,7 +216,7 @@ async function handleConnection(socket: WebSocket, request: IncomingMessage): Pr
       [sessionId, batch.map((e) => e.offsetMs), batch.map((e) => e.stream), batch.map((e) => e.data)],
     ).catch((error: unknown) => {
       // Recording must never take the session down with it.
-      console.error("Terminal recording write failed", { sessionId, error: error instanceof Error ? error.message : error });
+      logger.error("Terminal recording write failed", { sessionId, error: error instanceof Error ? error.message : error });
     });
   };
 

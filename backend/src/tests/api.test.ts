@@ -78,6 +78,21 @@ describe("Orbit API", () => {
     expect(response.body.error.requestId).toBeTruthy();
   });
 
+  it("continues an inbound trace id but refuses one that could forge a log line", async () => {
+    const clean = await request(app).get("/api/v1/health").set("x-request-id", "trace-abc.123");
+    // A trace started by a load balancer should carry through Orbit.
+    expect(clean.headers["x-request-id"]).toBe("trace-abc.123");
+
+    // Newlines cannot be sent by a compliant HTTP client, so those are covered
+    // in the middleware's own test. These are values a client can send.
+    for (const hostile of ["bad id", "x".repeat(200), "has\ttab", "quote\"here"]) {
+      const response = await request(app).get("/api/v1/health").set("x-request-id", hostile);
+      expect(response.status).toBe(200);
+      expect(response.headers["x-request-id"]).not.toBe(hostile);
+      expect(response.headers["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/);
+    }
+  });
+
   it("lists tenant-scoped servers without exposing credentials", async () => {
     const response = await customer("get", "/api/v1/servers");
     expect(response.status).toBe(200);
@@ -102,7 +117,12 @@ describe("Orbit API", () => {
     const ambiguous = await customer("delete", `/api/v1/servers/${serverId}/files/entry`).query({ path: directory, recursive: "yes" });
     expect(ambiguous.status).toBe(400);
     const nonRecursive = await customer("delete", `/api/v1/servers/${serverId}/files/entry`).query({ path: directory, recursive: "false" });
-    expect(nonRecursive.status).not.toBe(204);
+    // Refusing is right, but the reason has to reach the caller: this used to
+    // be a 500 reading "An unexpected error occurred", which tells someone
+    // nothing about the flag they omitted.
+    expect(nonRecursive.status).toBe(400);
+    expect(nonRecursive.body.error.code).toBe("IS_A_DIRECTORY");
+    expect(nonRecursive.body.error.message).toContain("recursive");
     const stillPresent = await customer("get", `/api/v1/servers/${serverId}/files/content`).query({ path: `${directory}/child.txt` });
     expect(stillPresent.status).toBe(200);
     expect((await customer("delete", `/api/v1/servers/${serverId}/files/entry`).query({ path: directory, recursive: "true" })).status).toBe(204);

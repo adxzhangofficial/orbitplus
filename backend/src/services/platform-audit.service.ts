@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Request } from "express";
 import { pool } from "../database/pool.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Records what a platform operator did.
@@ -42,7 +43,7 @@ export async function recordPlatformAction(request: Request, input: AuditInput):
       ],
     );
   } catch (error) {
-    console.error("Platform audit write failed", {
+    logger.error("Platform audit write failed", {
       action: input.action,
       target: `${input.targetType}:${input.targetId ?? ""}`,
       error: error instanceof Error ? error.message : error,

@@ -4,6 +4,7 @@ import { env } from "../config/env.js";
 import { pool } from "../database/pool.js";
 import { unauthorized } from "../lib/errors.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
+import { logger } from "../lib/logger.js";
 
 export interface SessionSummary {
   id: string;
@@ -81,7 +82,7 @@ export async function rotateSession(rawToken: string, request: Request): Promise
         [session.family_id],
       );
       await client.query("COMMIT");
-      console.warn("Refresh token reuse detected; session family revoked", {
+      logger.warn("Refresh token reuse detected; session family revoked", {
         userId: session.user_id,
         familyId: session.family_id,
       });

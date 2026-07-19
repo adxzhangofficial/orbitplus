@@ -1,5 +1,6 @@
 import { serverForTenant } from "../services/server.service.js";
 import { markIndexStatus, storeTree, walkRemoteTree } from "../services/tree-index.service.js";
+import { logger } from "../lib/logger.js";
 
 export interface TreeIndexJob {
   serverId: string;
@@ -19,7 +20,7 @@ export async function runTreeIndex(job: TreeIndexJob): Promise<void> {
   try {
     const result = await walkRemoteTree(server);
     await storeTree(server, result);
-    console.info("Remote tree indexed", {
+    logger.info("Remote tree indexed", {
       serverId: server.id,
       entries: result.entries.length,
       truncated: result.truncated,

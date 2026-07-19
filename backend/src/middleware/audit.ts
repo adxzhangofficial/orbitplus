@@ -1,6 +1,7 @@
 import type { RequestHandler } from "express";
 import { pool } from "../database/pool.js";
 import { env } from "../config/env.js";
+import { logger } from "../lib/logger.js";
 
 const mutationMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
@@ -31,7 +32,7 @@ export const auditMutations: RequestHandler = (request, response, next) => {
         JSON.stringify({ statusCode: response.statusCode, path: request.path }),
       ],
     ).catch((error: unknown) => {
-      if (env.LOG_LEVEL === "debug") console.error("Audit event write failed", error);
+      if (env.LOG_LEVEL === "debug") logger.error("Audit event write failed", { error });
     });
   });
   next();

@@ -4,6 +4,7 @@ import { acquire } from "./connection-pool.js";
 import { DemoSftpAdapter } from "./demo-sftp.adapter.js";
 import type { RemoteFilesystem, ServerConnectionRecord, ServerCredentials } from "./remote-filesystem.js";
 import { SftpAdapter } from "./sftp.adapter.js";
+import { logger } from "../lib/logger.js";
 
 export { evictServer, poolStats, closeAllConnections } from "./connection-pool.js";
 
@@ -24,7 +25,7 @@ async function recordCapturedFingerprint(server: ServerConnectionRecord, adapter
     [server.id, adapter.capturedFingerprint],
   ).catch((error: unknown) => {
     // Recording the pin must not fail the operation the user asked for.
-    console.error("Could not record host fingerprint", {
+    logger.error("Could not record host fingerprint", {
       serverId: server.id,
       error: error instanceof Error ? error.message : error,
     });

@@ -1,5 +1,6 @@
 import type { RemoteFilesystem, ServerConnectionRecord } from "./remote-filesystem.js";
 import { AppError } from "../lib/errors.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Keeps SFTP connections alive between requests.
@@ -134,7 +135,7 @@ export async function acquire(
     const startedAt = Date.now();
     try {
       await adapter.connect();
-      console.info("SFTP connection opened", { serverId: server.id, handshakeMs: Date.now() - startedAt, poolSize: entries.length + 1 });
+      logger.info("SFTP connection opened", { serverId: server.id, handshakeMs: Date.now() - startedAt, poolSize: entries.length + 1 });
     } catch (error) {
       const reason = error instanceof Error ? error.message : "connection failed";
       recordFailure(server.id, reason);

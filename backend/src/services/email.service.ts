@@ -1,4 +1,5 @@
 import { appUrl, env } from "../config/env.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Transactional email.
@@ -52,7 +53,7 @@ async function deliver(message: Message): Promise<void> {
   if (!env.RESEND_API_KEY) {
     // Development transport: the link is printed so the flow is testable
     // end to end without configuring a provider.
-    console.info(
+    logger.info(
       `[email:dev] to=${message.to} subject=${JSON.stringify(message.subject)}` +
       (message.actionUrl ? `\n[email:dev] link=${message.actionUrl}` : ""),
     );
@@ -80,7 +81,7 @@ async function send(message: Message): Promise<void> {
   try {
     await deliver(message);
   } catch (error) {
-    console.error("Email delivery failed", {
+    logger.error("Email delivery failed", {
       to: message.to,
       subject: message.subject,
       error: error instanceof Error ? error.message : error,

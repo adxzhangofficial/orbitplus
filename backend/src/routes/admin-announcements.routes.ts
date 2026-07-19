@@ -5,6 +5,7 @@ import { asyncHandler } from "../lib/async-handler.js";
 import { conflict, notFound } from "../lib/errors.js";
 import { routeParam } from "../lib/route-param.js";
 import { recordPlatformAction } from "../services/platform-audit.service.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Customer announcements, from the platform side.
@@ -197,7 +198,7 @@ adminAnnouncementsRouter.post(
     if (announcement.send_email) {
       const { deliverEmails } = await import("../services/announcement.service.js");
       void deliverEmails(id).catch((error: unknown) => {
-        console.error("Announcement email delivery failed", { id, error });
+        logger.error("Announcement email delivery failed", { id, error });
       });
     }
     response.json({ data: { published: true, emailQueued: announcement.send_email } });

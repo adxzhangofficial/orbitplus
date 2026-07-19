@@ -1,6 +1,7 @@
 import { pool } from "../database/pool.js";
 import { installAgentOnServer, recordAgentInstallOutcome } from "../services/agent-install.service.js";
 import { serverForTenant } from "../services/server.service.js";
+import { logger } from "../lib/logger.js";
 
 export interface AgentInstallJob {
   serverId: string;
@@ -20,11 +21,11 @@ export async function runAgentInstall(job: AgentInstallJob): Promise<void> {
   await recordAgentInstallOutcome(server.id, result);
 
   if (result.installed) {
-    console.info("Agent installed", { serverId: server.id, host: server.host });
+    logger.info("Agent installed", { serverId: server.id, host: server.host });
     return;
   }
 
-  console.warn("Agent not installed", { serverId: server.id, reason: result.reason });
+  logger.warn("Agent not installed", { serverId: server.id, reason: result.reason });
   await pool.query(
     `INSERT INTO notifications(organization_id, title, message, type, resource_type, resource_id)
      VALUES($1, $2, $3, 'warning', 'server', $4)`,

@@ -2,6 +2,7 @@ import { pool } from "../database/pool.js";
 import { pruneAuthTokens } from "../services/auth-token.service.js";
 import { deleteSnapshot } from "../services/backup.service.js";
 import { pruneExpiredVersions } from "../services/file.service.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Applies each organization's retention window.
@@ -22,7 +23,7 @@ export async function runRetentionSweep(): Promise<{ organizations: number; vers
       blobs += result.blobs;
     } catch (error) {
       // One tenant's failure must not abort the sweep for everyone else.
-      console.error("Retention sweep failed for organization", {
+      logger.error("Retention sweep failed for organization", {
         organizationId: organization.id,
         error: error instanceof Error ? error.message : error,
       });
@@ -62,7 +63,7 @@ export async function runBackupExpiry(): Promise<{ expired: number; bytesFreed: 
       bytesFreed += Number(backup.size_bytes) || 0;
     } catch (error) {
       // One unreadable snapshot must not stop the rest from being reclaimed.
-      console.error("Backup expiry failed", {
+      logger.error("Backup expiry failed", {
         backupId: backup.id,
         error: error instanceof Error ? error.message : error,
       });

@@ -4,6 +4,7 @@ import { env } from "./config/env.js";
 import { closePool, pool } from "./database/pool.js";
 import { assertSchemaReady } from "./database/schema.js";
 import { attachTerminalServer } from "./services/terminal.service.js";
+import { logger } from "./lib/logger.js";
 
 const server = createServer(app);
 
@@ -16,10 +17,10 @@ async function start(): Promise<void> {
     await pool.query("SELECT 1");
     const schema = await assertSchemaReady();
     server.listen(env.PORT, "0.0.0.0", () => {
-      console.log(`Orbit API listening on http://127.0.0.1:${env.PORT} (schema ${schema.latestMigration})`);
+      logger.info(`Orbit API listening on http://127.0.0.1:${env.PORT} (schema ${schema.latestMigration})`);
     });
   } catch (error) {
-    console.error("Orbit API startup readiness check failed", error instanceof Error ? error.message : error);
+    logger.error("Orbit API startup readiness check failed", { error });
     await closePool().catch(() => undefined);
     process.exitCode = 1;
   }
@@ -28,7 +29,7 @@ async function start(): Promise<void> {
 void start();
 
 async function shutdown(signal: string): Promise<void> {
-  console.log(`${signal} received; shutting down`);
+  logger.info(`${signal} received; shutting down`);
   server.close(async () => {
     await closePool();
     process.exit(0);

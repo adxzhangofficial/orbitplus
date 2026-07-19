@@ -1,6 +1,7 @@
 import { PgBoss } from "pg-boss";
 import { env } from "../config/env.js";
 import { heldStartAfter, HELD_MARKER, isIntakePaused } from "./intake.js";
+import { logger } from "../lib/logger.js";
 
 /**
  * Durable job queue backed by the application's own PostgreSQL instance.
@@ -91,7 +92,7 @@ export async function getBoss(): Promise<PgBoss> {
       connectionString: env.DATABASE_URL,
       schema: "pgboss",
     });
-    instance.on("error", (error: unknown) => console.error("Job queue error", error));
+    instance.on("error", (error: unknown) => logger.error("Job queue error", { error }));
     await instance.start();
     for (const queue of Object.values(QUEUES)) {
       // Retry policy is per queue in pg-boss v12. Jobs retry with backoff
