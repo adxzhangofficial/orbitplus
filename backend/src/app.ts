@@ -24,6 +24,7 @@ import { organizationRouter } from "./routes/organization.routes.js";
 import { overviewRouter } from "./routes/overview.routes.js";
 import { plansRouter } from "./routes/plans.routes.js";
 import { profileRouter } from "./routes/profile.routes.js";
+import { runbooksRouter } from "./routes/runbooks.routes.js";
 import { serversRouter } from "./routes/servers.routes.js";
 import { teamRouter } from "./routes/team.routes.js";
 import { terminalRouter } from "./routes/terminal.routes.js";
@@ -85,6 +86,7 @@ export function createApp() {
   customer.use("/team", teamRouter);
   customer.use("/billing", billingRouter);
   customer.use("/integrations", integrationsRouter);
+  customer.use("/runbooks", runbooksRouter);
   customer.use("/terminal", terminalRouter);
   const admin = Router();
   admin.use(authenticate, requirePlatformAdmin);
