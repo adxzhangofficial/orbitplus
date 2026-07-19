@@ -25,10 +25,10 @@ export interface Server {
   region: string;
   provider: string;
   rootPath: string;
-  latency: number;
-  cpu: number;
-  memory: number;
-  disk: number;
+  latency: number | null;
+  cpu: number | null;
+  memory: number | null;
+  disk: number | null;
   uptime: string;
   lastSeen: string;
   tags: string[];
