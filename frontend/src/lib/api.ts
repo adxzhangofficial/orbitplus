@@ -153,6 +153,7 @@ async function requestEnvelope<T>(path: string, init: RequestInit = {}): Promise
 
 export const api = {
   get: <T>(path: string, init?: RequestInit) => request<T>(path, init),
+  getWithMeta: <T>(path: string, init?: RequestInit) => requestEnvelope<T>(path, init),
   getEnvelope: <T>(path: string, init?: RequestInit) => requestEnvelope<T>(path, init),
   post: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: "POST", body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body) }),
   put: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: "PUT", body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body) }),
