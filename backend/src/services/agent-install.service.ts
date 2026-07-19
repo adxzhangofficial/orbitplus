@@ -139,16 +139,53 @@ export async function installAgentOnServer(server: ServerConnectionRecord): Prom
 }
 
 function describeFailure(output: string): string {
-  if (/permission denied|not permitted|must be root/i.test(output)) {
+  // Checked before anything else because it is the failure every local
+  // development setup hits, and its symptoms otherwise look like a broken
+  // script rather than an unreachable address.
+  if (isLoopbackOrPrivate(appUrl)) {
+    return `The agent runs on your server and reports back to Orbit, but this deployment's address is ${appUrl}, which from that server means the server itself. Set APP_URL to an address the server can actually reach before the agent can enrol.`;
+  }
+  if (/permission denied|not permitted|must be root|Operation not permitted/i.test(output)) {
     return "The connecting user could not write to /usr/local/bin. Connect as root or a sudo-capable user to install the agent.";
   }
-  if (/curl.*not found|curl is required/i.test(output)) {
-    return "curl is not installed on this server, which the agent needs to report.";
+  if (/curl.*not found|curl is required|command not found/i.test(output)) {
+    return "curl is not installed on this server, and the agent needs it to report.";
   }
-  if (/Enrolment failed|Enrollment failed/i.test(output)) {
-    return "The server could not reach Orbit to enrol. Check that this deployment's URL is reachable from the server.";
+  if (/Enrolment failed|Enrollment failed|Could not resolve|Connection refused|Failed to connect/i.test(output)) {
+    return `The server could not reach Orbit at ${appUrl} to enrol. Check that this address is reachable from the server.`;
   }
-  return "The agent could not be installed. Everything except resource metrics still works.";
+  return `The agent could not be installed. Everything except resource metrics still works. Server output: ${output.slice(0, 300) || "none"}`;
+}
+
+/** True when the configured address cannot mean anything to a remote host. */
+function isLoopbackOrPrivate(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === "localhost"
+      || hostname === "::1"
+      || /^127\./.test(hostname)
+      || /^10\./.test(hostname)
+      || /^192\.168\./.test(hostname)
+      || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether an agent can report to this deployment at all.
+ *
+ * Surfaced so the interface can explain the situation up front rather than
+ * queueing an install that is guaranteed to fail.
+ */
+export function agentReportingReachable(): { reachable: boolean; reason?: string } {
+  if (isLoopbackOrPrivate(appUrl)) {
+    return {
+      reachable: false,
+      reason: `Orbit is reachable at ${appUrl}, which a remote server cannot resolve to this machine. Agents can only report once APP_URL points somewhere they can reach.`,
+    };
+  }
+  return { reachable: true };
 }
 
 export async function recordAgentInstallOutcome(serverId: string, result: AgentInstallResult): Promise<void> {

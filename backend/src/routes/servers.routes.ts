@@ -10,6 +10,7 @@ import { decryptJson, encryptJson } from "../lib/crypto.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
 import { enqueue, QUEUES } from "../queue/index.js";
 import { installOrbitKey } from "../services/key-provisioning.service.js";
+import { agentReportingReachable } from "../services/agent-install.service.js";
 import { badRequest, conflict, notFound } from "../lib/errors.js";
 import { pagination, pageMeta } from "../lib/pagination.js";
 import { requireRole } from "../middleware/auth.js";
@@ -266,7 +267,8 @@ serversRouter.get(
          FROM server_agents WHERE server_id = $1`,
       [server.id],
     );
-    response.json({ data: result.rows[0] ?? { status: "none" } });
+    const reach = agentReportingReachable();
+    response.json({ data: { ...(result.rows[0] ?? { status: "none" }), deploymentReachable: reach.reachable, deploymentReason: reach.reason } });
   }),
 );
 
