@@ -1,13 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
-import { withAdapter } from "../adapters/index.js";
 import { normalizeRemotePath } from "../adapters/path-policy.js";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { notFound } from "../lib/errors.js";
 import { pagination, pageMeta } from "../lib/pagination.js";
 import { requireRole } from "../middleware/auth.js";
-import { writeVersioned } from "../services/file.service.js";
+import { enqueue, QUEUES } from "../queue/index.js";
 import { serverForTenant } from "../services/server.service.js";
 
 const transferSchema = z.object({
@@ -57,29 +56,23 @@ transfersRouter.post(
       [request.tenant!.organizationId, server.id, input.name, input.direction, normalizeRemotePath(input.sourcePath), normalizeRemotePath(input.destinationPath), request.auth!.userId],
     );
     const id = result.rows[0]!.id;
-    let downloadedContent: string | undefined;
+
+    // Handed to the queue rather than executed inline. A transfer against a
+    // slow or unreachable server used to hold the HTTP connection open until
+    // it finished or timed out, and a failure left no way to retry.
     if (input.executeNow) {
-      await pool.query("UPDATE transfers SET status = 'running', started_at = now(), progress = 5 WHERE id = $1", [id]);
-      try {
-        await withAdapter(server, async (adapter) => {
-          let content: Buffer;
-          if (input.direction === "upload") {
-            if (input.content === undefined) throw new Error("Upload transfers require content");
-            content = Buffer.from(input.content, input.encoding);
-          } else {
-            content = await adapter.read(normalizeRemotePath(input.sourcePath));
-          }
-          if (input.direction === "download") downloadedContent = content.toString("base64");
-          else await writeVersioned({ adapter, organizationId: request.tenant!.organizationId, serverId: server.id, path: normalizeRemotePath(input.destinationPath), content, userId: request.auth!.userId, note: `Transfer ${id}` });
-          await pool.query(
-            "UPDATE transfers SET status = 'completed', progress = 100, bytes_total = $2, bytes_transferred = $2, completed_at = now() WHERE id = $1",
-            [id, content.length],
-          );
-        });
-      } catch (error) {
-        await pool.query("UPDATE transfers SET status = 'failed', error_message = $2, completed_at = now() WHERE id = $1", [id, error instanceof Error ? error.message.slice(0, 1000) : "Transfer failed"]);
-        throw error;
-      }
+      await enqueue(QUEUES.transfer, {
+        transferId: id,
+        organizationId: request.tenant!.organizationId,
+        serverId: server.id,
+        userId: request.auth!.userId,
+        direction: input.direction,
+        sourcePath: normalizeRemotePath(input.sourcePath),
+        destinationPath: normalizeRemotePath(input.destinationPath),
+        ...(input.content === undefined
+          ? {}
+          : { content: Buffer.from(input.content, input.encoding).toString("base64") }),
+      });
     }
     const transfer = await pool.query(
       `SELECT id, server_id AS "serverId", name, direction, source_path AS "sourcePath",
@@ -88,7 +81,7 @@ transfersRouter.post(
          FROM transfers WHERE id = $1 AND organization_id = $2`,
       [id, request.tenant!.organizationId],
     );
-    response.status(201).json({ data: { ...transfer.rows[0], ...(downloadedContent ? { content: downloadedContent, encoding: "base64" } : {}) } });
+    response.status(201).json({ data: transfer.rows[0] });
   }),
 );
 
