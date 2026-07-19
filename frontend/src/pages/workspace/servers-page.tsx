@@ -113,19 +113,6 @@ export function ServersPage() {
    * ssh-keyscan. This is trust on first use: the value is shown for comparison
    * against whatever the provider published, and pinned once saved.
    */
-  const retrieveRef = useRef<() => void>(() => undefined);
-  retrieveRef.current = () => { void retrieveFingerprint(); };
-
-  // Fires on arrival at the authentication step. The host is already known by
-  // then, so the key is fetched without the user having to ask for it.
-  useEffect(() => {
-    if (step !== 2 || !newOpen) return;
-    if (!connection.host || connection.hostFingerprint || discovering) return;
-    retrieveRef.current();
-    // Intentionally keyed on the step and host only: re-running on every
-    // keystroke in the password field would hammer the rate limit.
-  }, [step, newOpen, connection.host]);
-
   async function retrieveFingerprint() {
     setDiscovering(true);
     setDiscoverError(undefined);
@@ -233,7 +220,7 @@ export function ServersPage() {
         {filtered.length ? view === "grid" ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{filtered.map((server) => <article key={server.id} className="group rounded-lg border border-border bg-card transition-colors hover:border-white/20"><div className="flex items-start gap-3 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"><ServerIcon className="size-4" /></span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><Link to={`/workspace/servers/${server.id}`} className="truncate text-xs font-medium hover:underline">{server.name}</Link>{server.starred && <Star className="size-3 fill-amber-300 text-amber-300" />}</div><p className="mt-1 truncate font-mono text-[8px] text-zinc-600">{server.username}@{server.host}:{server.port}</p></div><StatusBadge status={server.status} /></div><div className="grid grid-cols-3 border-y border-border"><div className="border-r border-border p-3"><p className="text-[8px] text-muted-foreground">CPU</p><strong className="mt-1 block text-sm tabular-nums">{server.cpu}%</strong><Progress value={server.cpu} className="mt-2 h-px" indicatorClassName={server.cpu > 75 ? "bg-amber-400" : "bg-zinc-400"} /></div><div className="border-r border-border p-3"><p className="text-[8px] text-muted-foreground">Memory</p><strong className="mt-1 block text-sm tabular-nums">{server.memory}%</strong><Progress value={server.memory} className="mt-2 h-px" indicatorClassName="bg-zinc-400" /></div><div className="p-3"><p className="text-[8px] text-muted-foreground">Disk</p><strong className="mt-1 block text-sm tabular-nums">{server.disk}%</strong><Progress value={server.disk} className="mt-2 h-px" indicatorClassName="bg-zinc-400" /></div></div><div className="flex items-center gap-2 px-4 py-3"><Badge>{server.environment}</Badge>{server.tags.slice(0, 2).map((tag) => <span key={tag} className="text-[8px] text-zinc-600">#{tag}</span>)}<span className="ml-auto font-mono text-[8px] text-zinc-600">{server.latency ? `${server.latency} ms` : relativeTime(server.lastSeen)}</span></div><div className="grid grid-cols-3 border-t border-border"><Link to={`/workspace/servers/${server.id}/files`} className="flex h-9 items-center justify-center gap-1.5 border-r border-border text-[9px] text-zinc-500 hover:bg-muted hover:text-white"><ServerIcon className="size-3" />Files</Link><Link to={`/workspace/terminal?server=${server.id}`} className="flex h-9 items-center justify-center gap-1.5 border-r border-border text-[9px] text-zinc-500 hover:bg-muted hover:text-white"><Terminal className="size-3" />Terminal</Link><Link to={`/workspace/servers/${server.id}`} className="flex h-9 items-center justify-center gap-1.5 text-[9px] text-zinc-500 hover:bg-muted hover:text-white">Details<ChevronRight className="size-3" /></Link></div></article>)}</div> : <TableWrap className="mt-4"><Table><TableHead><tr><Th>Server</Th><Th>Environment</Th><Th>Status</Th><Th>Region</Th><Th>Resources</Th><Th>Last seen</Th><Th /></tr></TableHead><tbody>{filtered.map((server) => <Tr key={server.id}><Td><Link to={`/workspace/servers/${server.id}`} className="flex items-center gap-2.5"><span className="grid size-7 place-items-center rounded-md bg-muted"><ServerIcon className="size-3.5" /></span><span><strong className="block text-[10px]">{server.name}</strong><span className="font-mono text-[8px] text-zinc-600">{server.host}</span></span></Link></Td><Td><Badge>{server.environment}</Badge></Td><Td><StatusBadge status={server.status} /></Td><Td className="text-zinc-500">{server.region}</Td><Td><span className="font-mono text-[8px] text-zinc-500">{server.cpu}% · {server.memory}% · {server.disk}%</span></Td><Td className="text-zinc-600">{relativeTime(server.lastSeen)}</Td><Td><Button variant="ghost" size="icon"><MoreHorizontal /></Button></Td></Tr>)}</tbody></Table></TableWrap> : <div className="mt-5 grid min-h-64 place-items-center rounded-lg border border-dashed border-border"><div className="text-center"><ServerIcon className="mx-auto size-5 text-zinc-700" /><p className="mt-3 text-xs">No servers match</p><p className="mt-1 text-[9px] text-muted-foreground">Clear filters or connect a new server.</p><Button size="sm" className="mt-4" onClick={() => { setQuery(""); setEnvironment("all"); setStatus("all"); }}>Clear filters</Button></div></div>}
       </div>
 
-      <Modal open={newOpen} onClose={close} title="Connect a server" description={`Step ${step} of 3 · ${step === 1 ? "Connection details" : step === 2 ? "Authentication and trust" : "Verify and save"}`} size="lg" footer={<>{step > 1 && <Button variant="ghost" onClick={() => setStep((value) => value - 1)}>Back</Button>}<div className="flex-1" /><Button variant="outline" onClick={close}>Cancel</Button>{step < 3 ? <Button onClick={() => setStep((value) => value + 1)} disabled={(step === 1 && (!connection.name || !connection.host)) || (step === 2 && (!connection.username || !connection.secret || !connection.hostFingerprint))}>Continue<ChevronRight /></Button> : <Button onClick={saveConnection} disabled={!tested}>Save connection</Button>}</>}>
+      <Modal open={newOpen} onClose={close} title="Connect a server" description={`Step ${step} of 3 · ${step === 1 ? "Connection details" : step === 2 ? "Authentication and trust" : "Verify and save"}`} size="lg" footer={<>{step > 1 && <Button variant="ghost" onClick={() => setStep((value) => value - 1)}>Back</Button>}<div className="flex-1" /><Button variant="outline" onClick={close}>Cancel</Button>{step < 3 ? <Button onClick={() => setStep((value) => value + 1)} disabled={(step === 1 && (!connection.name || !connection.host)) || (step === 2 && (!connection.username || !connection.secret))}>Continue<ChevronRight /></Button> : <Button onClick={saveConnection} disabled={!tested}>Save connection</Button>}</>}>
         <div className="mb-6 grid grid-cols-3 gap-2">{[1, 2, 3].map((item) => <div key={item} className={cn("h-1 rounded-full", item <= step ? "bg-blue-500" : "bg-zinc-800")} />)}</div>
         {step === 1 && <div className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><Field label="Server name"><Input value={connection.name} onChange={update("name")} placeholder="Production API" autoFocus /></Field><Field label="Environment"><Select className="w-full" value={connection.environment} onChange={update("environment")}><option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option></Select></Field></div><div className="grid grid-cols-[1fr_100px] gap-4"><Field label="Hostname or IP"><Input value={connection.host} onChange={update("host")} placeholder="api.example.com" /></Field><Field label="Port"><Input value={connection.port} onChange={update("port")} type="number" /></Field></div><Field label="Allowed root path" hint="Orbit will canonicalize and enforce this root for all file operations."><Input value={connection.rootPath} onChange={update("rootPath")} placeholder="/var/www/app" /></Field></div>}
         {step === 2 && (
@@ -248,43 +235,16 @@ export function ServersPage() {
                 : <Input value={connection.secret} onChange={update("secret")} type="password" placeholder="••••••••••••" autoComplete="new-password" />}
             </Field>
             {connection.authenticationType === "privateKey" && <Field label="Key passphrase" hint="Optional"><Input value={connection.passphrase} onChange={update("passphrase")} type="password" autoComplete="off" /></Field>}
-            {/* Retrieved automatically on reaching this step. The host was
-                already supplied, so making the user ask for it separately adds
-                a decision they have no basis to make. */}
-            <Field label="Host key">
-              {discovering
-                ? <div className="flex items-center gap-2.5 rounded-lg border border-border bg-black/15 p-3 text-[10px] text-zinc-400">
-                    <RefreshCw className="size-3.5 shrink-0 animate-spin text-zinc-500" />
-                    Reading the host key from {connection.host}…
-                  </div>
-                : connection.hostFingerprint
-                  ? <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/[0.04] p-3">
-                      <div className="flex items-start gap-2">
-                        <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
-                        <div className="min-w-0 flex-1">
-                          <p className="break-all font-mono text-[10px] text-zinc-200">{connection.hostFingerprint}</p>
-                          <p className="mt-1 text-[8px] uppercase tracking-wider text-zinc-600">
-                            {discovered ? `${discovered.keyType} · ${connection.host}:${connection.port}` : "entered manually"}
-                          </p>
-                          <p className="mt-2 text-[9px] leading-4 text-zinc-500">
-                            Pinned on save. If this server ever presents a different key, Orbit refuses the connection instead of trusting it.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  : <div className="space-y-2">
-                      {discoverError && <p className="rounded-md border border-amber-400/15 bg-amber-400/5 p-2.5 text-[9px] leading-4 text-amber-200">{discoverError}</p>}
-                      <div className="flex gap-2">
-                        <Button type="button" variant="outline" size="sm" disabled={!connection.host} onClick={() => void retrieveFingerprint()}>
-                          <RefreshCw />Try again
-                        </Button>
-                      </div>
-                      <Input value={connection.hostFingerprint} onChange={update("hostFingerprint")} placeholder="Or paste SHA256:… from your provider" spellCheck={false} className="font-mono" />
-                      <p className="text-[9px] leading-4 text-zinc-600">
-                        Get it with <code className="text-zinc-500">ssh-keyscan {connection.host || "host"} | ssh-keygen -lf -</code> on a machine that can reach this server.
-                      </p>
-                    </div>}
-            </Field>
+            {/* No host-key step. The first connection records the key the
+                server presents and pins it, so later connections are verified
+                without asking the user for anything up front. */}
+            <details className="text-[9px] text-zinc-600">
+              <summary className="cursor-pointer hover:text-zinc-400">Pin a host key in advance (optional)</summary>
+              <Input value={connection.hostFingerprint} onChange={update("hostFingerprint")} placeholder="SHA256:… from your provider" spellCheck={false} className="mt-2 font-mono" />
+              <p className="mt-1.5 leading-4">
+                Leave this empty and Orbit records the key on first connection. Fill it in only if your provider published a fingerprint you want enforced from the very first connection.
+              </p>
+            </details>
             <div className="rounded-lg border border-blue-400/15 bg-blue-400/[0.04] p-3"><div className="flex gap-3"><KeyRound className="mt-0.5 size-3.5 text-blue-300" /><div><p className="text-[10px] font-medium text-blue-200">Credentials stay server-side</p><p className="mt-1 text-[9px] leading-4 text-blue-200/55">Secrets are sent only to the authenticated API, encrypted before storage, and never returned to the browser or exposed in logs.</p></div></div></div>
           </div>
         )}

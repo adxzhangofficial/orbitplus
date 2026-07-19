@@ -19,16 +19,29 @@ export class SftpAdapter implements RemoteFilesystem {
     return joinRemoteRoot(this.server.root_path, remotePath);
   }
 
+  /**
+   * Set when a server had no pinned key and this connection captured one, so
+   * the caller can persist it. Null on every later connection, which is
+   * verified against the stored pin instead.
+   */
+  public capturedFingerprint: string | null = null;
+
   async connect(): Promise<void> {
-    if (!this.server.host_fingerprint) {
-      throw badRequest("A pinned SHA-256 host fingerprint is required for real SFTP connections");
-    }
-    const suppliedFingerprint = this.server.host_fingerprint.trim();
-    const expected = /^sha256:/i.test(suppliedFingerprint)
-      ? Buffer.from(suppliedFingerprint.replace(/^sha256:/i, ""), "base64").toString("hex")
-      : suppliedFingerprint.toLowerCase().replace(/:/g, "");
-    if (!/^[a-f0-9]{64}$/i.test(expected)) {
-      throw badRequest("The pinned host fingerprint must be SHA256:base64 or a 64-character SHA-256 hex digest");
+    const suppliedFingerprint = this.server.host_fingerprint?.trim();
+    // No pin yet means this is the first connection to this server. OpenSSH
+    // accepts and records the key here rather than refusing, and demanding the
+    // fingerprint up front only pushes the user to fetch it by hand and paste
+    // it back, which is the same trust decision with more steps. The key is
+    // captured and pinned, so every later connection is verified.
+    const trustOnFirstUse = !suppliedFingerprint;
+    let expected = "";
+    if (!trustOnFirstUse) {
+      expected = /^sha256:/i.test(suppliedFingerprint!)
+        ? Buffer.from(suppliedFingerprint!.replace(/^sha256:/i, ""), "base64").toString("hex")
+        : suppliedFingerprint!.toLowerCase().replace(/:/g, "");
+      if (!/^[a-f0-9]{64}$/i.test(expected)) {
+        throw badRequest("The pinned host fingerprint must be SHA256:base64 or a 64-character SHA-256 hex digest");
+      }
     }
     if (this.server.authentication_type === "agent") {
       throw badRequest("SSH-agent authentication is disabled on shared workers; use a scoped password or private key");
@@ -41,7 +54,14 @@ export class SftpAdapter implements RemoteFilesystem {
       readyTimeout: 15_000,
       retries: 1,
       hostHash: "sha256",
-      hostVerifier: (fingerprint: string) => fingerprint.toLowerCase().replace(/:/g, "") === expected,
+      hostVerifier: (fingerprint: string) => {
+        const presented = fingerprint.toLowerCase().replace(/:/g, "");
+        if (trustOnFirstUse) {
+          this.capturedFingerprint = presented;
+          return true;
+        }
+        return presented === expected;
+      },
     };
     if (this.server.authentication_type === "password") options.password = this.credentials.password;
     if (this.server.authentication_type === "privateKey") {

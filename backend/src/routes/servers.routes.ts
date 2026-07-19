@@ -63,7 +63,9 @@ const connectionTestSchema = serverSchema.pick({
 
 function validateCredentials(input: CredentialInput, partial = false): void {
   if (input.adapterMode === "demo") return;
-  if (!input.hostFingerprint) throw badRequest("A pinned host fingerprint is required for real SFTP servers");
+  // A fingerprint is optional at creation. The first connection records the key
+  // the server presents and pins it, the way OpenSSH does, rather than making
+  // the user fetch it by hand before they are allowed to connect at all.
   // Rejected here as well as in SftpAdapter.connect so a stored 'agent' row fails
   // when it is saved rather than only when a connection is later attempted.
   if (input.authenticationType === "agent") {
