@@ -3,7 +3,7 @@ import { Building2, Copy, Globe2, Save, Shield } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { relativeTime } from "@/lib/utils";
-import { buttonClass, controlClass, Field, PageHeader, Panel, primaryButtonClass, Toggle } from "./_shared";
+import { buttonClass, controlClass, Field, PageHeader, Panel, primaryButtonClass, Toggle, pageContainerClass } from "./_shared";
 
 /**
  * Workspace identity and governance policy.
@@ -83,7 +83,7 @@ export function WorkspaceSettingsPage() {
 
   const canEdit = ["owner", "admin"].includes(organization.currentUserRole);
 
-  return <form onSubmit={save} className="space-y-5">
+  return <form onSubmit={save} className={pageContainerClass}>
     <PageHeader
       eyebrow="Organization settings"
       title="Workspace"

@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { formatBytes, relativeTime } from "@/lib/utils";
 import type { Transfer } from "@/types";
-import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, ProgressBar, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass } from "./_shared";
+import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, ProgressBar, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass, pageContainerClass } from "./_shared";
 
 type ServerOption = { id: string; name: string; rootPath: string };
 type BackendTransfer = { id: string; serverId: string; serverName?: string; name: string; direction: Transfer["direction"]; sourcePath: string; destinationPath: string; status: string; progress: number; bytesTotal: number | string; bytesTransferred: number | string; createdAt: string };
@@ -67,7 +67,7 @@ export function TransfersPage() {
     toast.info(paused ? "Preview queue resumed" : "Preview queue paused");
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Delivery" title="Transfers" description="One queue for uploads, downloads, and bidirectional sync jobs across every server." actions={<><button className={buttonClass} onClick={toggleQueue}>{paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}{paused ? "Resume queue" : "Pause all"}</button><button className={primaryButtonClass} onClick={() => setCreateOpen(true)}><Plus className="size-3.5" />New transfer</button></>} />
     <WorkspaceDataStatus live={live} loading={transfers.loading || servers.loading} error={transfers.error ?? servers.error} onRetry={() => { void transfers.refresh().catch(() => undefined); void servers.refresh().catch(() => undefined); }} />
     <div className="grid gap-3 sm:grid-cols-3"><Stat label="Active now" value={active} detail={paused ? "Queue paused" : "Processing normally"} icon={Gauge} tone="emerald" /><Stat label="Waiting" value={queued} detail="Priority ordered" icon={Pause} tone="amber" /><Stat label="Completed volume" value={formatBytes(transferred)} detail="Loaded history" icon={ArrowUpFromLine} tone="indigo" /></div>

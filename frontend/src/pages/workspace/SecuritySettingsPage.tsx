@@ -3,7 +3,7 @@ import { Laptop, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type SessionSummary } from "@/lib/api";
 import { relativeTime } from "@/lib/utils";
-import { buttonClass, controlClass, IconButton, PageHeader, Panel, StatusBadge } from "./_shared";
+import { buttonClass, controlClass, IconButton, PageHeader, Panel, StatusBadge, pageContainerClass } from "./_shared";
 
 /**
  * Account protection.
@@ -89,7 +89,7 @@ export function SecuritySettingsPage() {
     toast.success(`${others.length} session${others.length === 1 ? "" : "s"} revoked`);
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader
       eyebrow="Account protection"
       title="Security"

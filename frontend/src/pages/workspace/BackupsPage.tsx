@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { formatBytes, formatNumber, relativeTime } from "@/lib/utils";
 import type { Backup } from "@/types";
-import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass, Toggle } from "./_shared";
+import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass, Toggle, pageContainerClass } from "./_shared";
 
 const previewSchedules = [
   { id: "s1", name: "Production nightly", server: "Production API", cadence: "Every day · 02:00 UTC", retention: "30 days", enabled: true },
@@ -55,7 +55,7 @@ export function BackupsPage() {
     catch (error) { toast.error(error instanceof Error ? error.message : "Unable to restore backup"); }
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Recovery" title="Backups" description="Snapshots, retention policies, and one-click recovery across your fleet." actions={<><button className={buttonClass} onClick={() => live ? toast.info("Catalog integrity verification is not exposed by the API yet.") : toast.success("Preview catalog verified")}>Verify integrity</button><button className={primaryButtonClass} onClick={() => setCreateOpen(true)}><Plus className="size-3.5" />Create backup</button></>} />
     <WorkspaceDataStatus live={live} loading={backups.loading || servers.loading} error={backups.error ?? servers.error} onRetry={() => { void backups.refresh().catch(() => undefined); void servers.refresh().catch(() => undefined); }} />
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Stored backups" value={items.length} detail={`${items.filter((x) => x.status === "complete").length} recovery-ready`} icon={Archive} /><Stat label="Protected data" value={formatBytes(total)} detail={`${formatNumber(items.reduce((sum, item) => sum + item.files, 0))} files`} icon={DatabaseBackup} tone="sky" /><Stat label="Active schedules" value={scheduleRows.filter((x) => x.enabled).length} detail={live ? "Scheduling API not configured" : "Next preview run in 3h 18m"} icon={CalendarClock} tone="amber" /><Stat label="Storage policy" value={live ? "Managed" : "AES-256"} detail={live ? "Configured by the deployment" : "Preview encryption policy"} icon={ShieldCheck} tone="emerald" /></div>

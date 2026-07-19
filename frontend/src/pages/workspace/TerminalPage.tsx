@@ -7,7 +7,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { api } from "@/lib/api";
 import { relativeTime } from "@/lib/utils";
-import { buttonClass, controlClass, PageHeader, Panel, primaryButtonClass } from "./_shared";
+import { buttonClass, controlClass, PageHeader, Panel, primaryButtonClass, pageContainerClass } from "./_shared";
 
 /**
  * A real SSH shell.
@@ -162,7 +162,7 @@ export function TerminalPage() {
   const busy = phase === "connecting";
   const live = phase === "connected";
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader
       eyebrow="Remote access"
       title="Web terminal"

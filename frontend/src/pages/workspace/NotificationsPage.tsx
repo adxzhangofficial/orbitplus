@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { cn, relativeTime } from "@/lib/utils";
 import type { Notification } from "@/types";
-import { buttonClass, EmptyState, IconButton, PageHeader, Panel, Segmented, StatusBadge, Toggle } from "./_shared";
+import { buttonClass, EmptyState, IconButton, PageHeader, Panel, Segmented, StatusBadge, Toggle, pageContainerClass } from "./_shared";
 
 type BackendNotification = { id: string; type: string; title: string; message: string; link?: string; readAt?: string; createdAt: string };
 function toNotification(item: BackendNotification): Notification {
@@ -45,7 +45,7 @@ export function NotificationsPage() {
   }
   const iconFor = (item: Notification) => item.type === "critical" ? ShieldAlert : item.type === "warning" ? CircleAlert : item.type === "success" ? Check : Bell;
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Inbox" title="Notifications" description="Operational changes, security notices, and alerts that need your attention." actions={<button className={buttonClass} disabled={!unread} onClick={() => void markAll()}><CheckCheck className="size-3.5" />Mark all read</button>} />
     <WorkspaceDataStatus live={live} loading={resource.loading} error={resource.error} onRetry={() => void resource.refresh().catch(() => undefined)} />
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">

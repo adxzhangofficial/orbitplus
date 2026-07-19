@@ -5,7 +5,7 @@ import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { relativeTime } from "@/lib/utils";
-import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, Toggle } from "./_shared";
+import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, Toggle, pageContainerClass } from "./_shared";
 
 type Automation = { id: string; name: string; description: string; trigger: string; action: string; server: string; enabled: boolean; lastRun?: string; runs: number; status: "success" | "failed" | "idle"; triggerType?: BackendAutomation["triggerType"]; schedule?: string | null; actionType?: BackendAutomation["actionType"]; configuration?: Record<string, unknown> };
 type BackendAutomation = { id: string; name: string; description: string; triggerType: "schedule" | "webhook" | "event" | "manual"; schedule?: string | null; actionType: "backup" | "deployment" | "sync" | "health_check" | "webhook"; configuration: Record<string, unknown>; enabled: boolean; lastRunAt?: string; nextRunAt?: string; createdAt: string };
@@ -73,7 +73,7 @@ export function AutomationsPage() {
     setItems((rows) => rows.filter((row) => row.id !== item.id)); toast.success(live ? "Automation deleted" : "Preview automation deleted");
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Orchestration" title="Automations" description="Turn recurring operations into safe, observable workflows with triggers, conditions, and approvals." actions={<button className={primaryButtonClass} onClick={() => setOpen(true)}><Plus className="size-3.5" />New automation</button>} />
     <WorkspaceDataStatus live={live} loading={resource.loading} error={resource.error} onRetry={() => void resource.refresh().catch(() => undefined)} />
     <div className="grid gap-3 sm:grid-cols-3"><Stat label="Active workflows" value={items.filter((item) => item.enabled).length} detail="Workspace automation rules" icon={Zap} tone="indigo" /><Stat label="Recorded runs" value={items.reduce((sum, item) => sum + item.runs, 0)} detail={live ? "Run counters are not exposed" : "98.7% preview success"} icon={Play} tone="emerald" /><Stat label="Latest activity" value={items.some((item) => item.lastRun) ? "Recorded" : "None"} detail="Runner timestamps" icon={Clock3} tone="sky" /></div>

@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { relativeTime } from "@/lib/utils";
 import type { Role, TeamMember } from "@/types";
-import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass } from "./_shared";
+import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass, pageContainerClass } from "./_shared";
 
 type TeamRow = TeamMember & { membershipId?: string; invitationId?: string; kind?: "member" | "invitation"; accessReported?: boolean };
 type BackendTeam = { members: Array<{ membershipId: string; id: string; name: string; email: string; role: Role; status: string; lastLoginAt?: string; joinedAt: string }>; invitations: Array<{ id: string; email: string; role: Role; status: string; expiresAt: string; createdAt: string }> };
@@ -63,7 +63,7 @@ export function TeamPage() {
 
   const active = members.filter((member) => member.status === "active").length;
   const mfaCoverage = active ? Math.round(members.filter((member) => member.status === "active" && member.mfa).length / active * 100) : 0;
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Access control" title="Team" description="Invite collaborators, assign least-privilege roles, and keep workspace access accountable." actions={<button className={primaryButtonClass} onClick={() => setOpen(true)}><UserPlus className="size-3.5" />Invite member</button>} />
     <WorkspaceDataStatus live={live} loading={resource.loading} error={resource.error} onRetry={() => void resource.refresh().catch(() => undefined)} />
     <div className="grid gap-3 sm:grid-cols-3"><Stat label="Workspace members" value={active} detail="Active memberships" icon={Users} /><Stat label="Pending invites" value={members.filter((member) => member.status === "invited").length} detail="Expire after 7 days" icon={MailPlus} tone="amber" /><Stat label="MFA coverage" value={live ? "Not reported" : `${mfaCoverage}%`} detail={live ? "Authentication factor state is private" : "Preview security posture"} icon={ShieldCheck} tone="emerald" /></div>

@@ -3,7 +3,7 @@ import { Check, Clipboard, Eye, EyeOff, KeyRound, Plus, SearchX, ShieldCheck, Tr
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { relativeTime } from "@/lib/utils";
-import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge } from "./_shared";
+import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, pageContainerClass } from "./_shared";
 
 /**
  * API key management.
@@ -104,7 +104,7 @@ export function ApiKeysPage() {
     }));
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader
       eyebrow="Developer platform"
       title="API keys"

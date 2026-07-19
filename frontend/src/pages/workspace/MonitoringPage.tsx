@@ -6,7 +6,7 @@ import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { relativeTime } from "@/lib/utils";
-import { buttonClass, controlClass, EmptyState, PageHeader, Panel, ProgressBar, Segmented, Stat, StatusBadge } from "./_shared";
+import { buttonClass, controlClass, EmptyState, PageHeader, Panel, ProgressBar, Segmented, Stat, StatusBadge, pageContainerClass } from "./_shared";
 
 type MonitorServer = { id: string; name: string; status: string; cpu: number | null; memory: number | null; disk: number | null; latency: number | null; metricsSource?: string; metricsSampledAt?: string; sampledAt?: string; services?: unknown[] };
 type MonitorAlert = { id: string; title: string; server: string; metric: string; severity: string; createdAt: string; state: string };
@@ -46,7 +46,7 @@ export function MonitoringPage() {
     toast.success(status === "resolved" ? "Alert resolved" : "Alert acknowledged");
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Observability" title="Monitoring" description="Real-time health, resource telemetry, and actionable alerts for every connected server." actions={<><select value={selected?.id ?? ""} onChange={(event) => setServerId(event.target.value)} className={controlClass}>{data.servers.map((server) => <option key={server.id} value={server.id}>{server.name}</option>)}</select><button className={buttonClass} onClick={() => void probe()}><RefreshCw className="size-3.5" />Probe now</button></>} />
     <WorkspaceDataStatus live={live} loading={resource.loading} error={resource.error} onRetry={() => void resource.refresh().catch(() => undefined)} />
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Fleet availability" value={`${online}/${data.servers.length}`} detail="Latest connection state" icon={Server} tone="emerald" /><Stat label="Open alerts" value={data.alerts.filter((alert) => alert.state === "open").length} detail={`${data.alerts.filter((alert) => alert.severity === "critical" && alert.state === "open").length} critical`} icon={BellRing} tone="rose" /><Stat label="Selected latency" value={`${selected?.latency ?? 0}ms`} detail="Latest probe" icon={Gauge} tone="sky" /><Stat label="Telemetry samples" value={data.servers.filter((server) => server.sampledAt).length} detail={live ? "Latest samples available" : "Preview history"} icon={Activity} tone="indigo" /></div>

@@ -6,7 +6,7 @@ import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { formatBytes } from "@/lib/utils";
-import { buttonClass, PageHeader, Panel, ProgressBar, Segmented, Stat } from "./_shared";
+import { buttonClass, PageHeader, Panel, ProgressBar, Segmented, Stat, pageContainerClass } from "./_shared";
 
 type BillingUsage = { members: number; workspaces: number; servers: number; backupBytes: number | string; transferBytes: number | string };
 type UsageData = { subscription?: { plan: "free" | "pro" | "enterprise" }; usage: BillingUsage };
@@ -44,7 +44,7 @@ export function UsagePage() {
     const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "orbit-usage.csv"; anchor.click(); URL.revokeObjectURL(url); toast.success("Usage report exported");
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Plan & consumption" title="Usage" description="Track workspace consumption, quotas, and activity before limits affect your operations." actions={<button className={buttonClass} onClick={exportCsv}><Download className="size-3.5" />Export CSV</button>} />
     <WorkspaceDataStatus live={live} loading={resource.loading} error={resource.error} onRetry={() => void resource.refresh().catch(() => undefined)} />
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{resources.map((item) => <Stat key={item.label} label={item.label} value={item.limit === undefined ? item.label.includes("storage") || item.label.includes("transfer") ? formatBytes(item.used) : item.used : `${item.used}${item.unit ?? ""} / ${item.limit}${item.unit ?? ""}`} detail={item.detail} icon={item.icon} tone={item.tone} />)}</div>

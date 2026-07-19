@@ -107,6 +107,67 @@ export interface AdminDirectory {
   details: AdminCustomerDetail[];
 }
 
+export interface AdminFeatureFlag {
+  key: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  rolloutPercent: number;
+  enabledOrganizations: string[];
+  disabledOrganizations: string[];
+  updatedAt: string;
+}
+
+export interface FeatureFlagInput {
+  name: string;
+  description?: string;
+  enabled?: boolean;
+  rolloutPercent?: number;
+  enabledOrganizations?: string[];
+  disabledOrganizations?: string[];
+}
+
+export interface AdminTicket {
+  id: string;
+  subject: string;
+  status: "open" | "pending" | "resolved" | "closed";
+  priority: "low" | "normal" | "high" | "urgent";
+  createdAt: string;
+  organizationName: string | null;
+  plan: string | null;
+  openedByName: string | null;
+  assignedToName: string | null;
+  messageCount: number;
+}
+
+export interface AdminTicketDetail extends AdminTicket {
+  body: string;
+  organizationId: string | null;
+  messages: Array<{ id: number; body: string; authorRole: "customer" | "operator"; authorName: string | null; createdAt: string }>;
+}
+
+export interface AdminQueue {
+  name: string;
+  ready: number;
+  active: number;
+  deferred: number;
+  failed: number;
+  total: number;
+}
+
+export interface PlatformAuditEntry {
+  id: number;
+  actorEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+  ip: string | null;
+  createdAt: string;
+  organizationName: string | null;
+}
+
 export const adminApi = {
   overview: () => api.get<AdminOverview>("/admin/overview"),
   customers: () => api.get<AdminCustomer[]>("/admin/customers?limit=100"),
@@ -114,6 +175,25 @@ export const adminApi = {
   updateCustomer: (id: string, input: { plan?: AdminCustomer["plan"]; status?: AdminCustomer["status"] }) => api.patch<Pick<AdminCustomer, "id" | "name" | "slug" | "plan" | "status">>(`/admin/customers/${encodeURIComponent(id)}`, input),
   activity: () => api.get<AdminAuditEvent[]>("/admin/activity?limit=100"),
   system: () => api.get<AdminSystem>("/admin/system"),
+  // Write operations. Each requires a reason, which the API enforces and which
+  // ends up in the platform audit record.
+  suspendOrganization: (id: string, reason: string) => api.post(`/admin/organizations/${encodeURIComponent(id)}/suspend`, { reason }),
+  restoreOrganization: (id: string, reason: string) => api.post(`/admin/organizations/${encodeURIComponent(id)}/restore`, { reason }),
+  suspendUser: (id: string, reason: string) => api.post(`/admin/users/${encodeURIComponent(id)}/suspend`, { reason }),
+  restoreUser: (id: string, reason: string) => api.post(`/admin/users/${encodeURIComponent(id)}/restore`, { reason }),
+  revokeUserSessions: (id: string, reason: string) => api.post(`/admin/users/${encodeURIComponent(id)}/revoke-sessions`, { reason }),
+
+  featureFlags: () => api.get<AdminFeatureFlag[]>("/admin/feature-flags"),
+  saveFeatureFlag: (key: string, input: FeatureFlagInput) => api.put<AdminFeatureFlag>(`/admin/feature-flags/${encodeURIComponent(key)}`, input),
+  deleteFeatureFlag: (key: string) => api.delete(`/admin/feature-flags/${encodeURIComponent(key)}`),
+
+  tickets: (status?: string) => api.get<AdminTicket[]>(`/admin/support/tickets${status ? `?status=${status}` : ""}`),
+  ticket: (id: string) => api.get<AdminTicketDetail>(`/admin/support/tickets/${encodeURIComponent(id)}`),
+  replyToTicket: (id: string, body: string, status?: string) => api.post(`/admin/support/tickets/${encodeURIComponent(id)}/reply`, { body, status }),
+
+  jobs: () => api.get<AdminQueue[]>("/admin/jobs"),
+  platformAudit: (action?: string) => api.get<PlatformAuditEntry[]>(`/admin/platform-audit${action ? `?action=${action}` : ""}`),
+
   directory: async (): Promise<AdminDirectory> => {
     const customers = await api.get<AdminCustomer[]>("/admin/customers?limit=100");
     const details = await Promise.all(customers.map((customer) => api.get<AdminCustomerDetail>(`/admin/customers/${encodeURIComponent(customer.id)}`)));

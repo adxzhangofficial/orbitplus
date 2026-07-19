@@ -3,7 +3,7 @@ import { CheckCircle2, Clipboard, MessageSquare, Plus, Send, Trash2, Webhook, XC
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { relativeTime } from "@/lib/utils";
-import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, Stat, StatusBadge, Toggle } from "./_shared";
+import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, Stat, StatusBadge, Toggle, pageContainerClass } from "./_shared";
 
 /**
  * Outbound integrations.
@@ -124,7 +124,7 @@ export function IntegrationsPage() {
     }
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader
       eyebrow="Connected services"
       title="Integrations"

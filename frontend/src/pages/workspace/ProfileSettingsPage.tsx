@@ -3,7 +3,7 @@ import { Globe2, Mail, Save, User } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
-import { buttonClass, controlClass, Field, PageHeader, Panel, primaryButtonClass, Toggle } from "./_shared";
+import { buttonClass, controlClass, Field, PageHeader, Panel, primaryButtonClass, Toggle, pageContainerClass } from "./_shared";
 
 /**
  * The signed-in person's profile.
@@ -90,7 +90,7 @@ export function ProfileSettingsPage() {
 
   const initials = profile.name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 
-  return <form onSubmit={submit} className="space-y-5">
+  return <form onSubmit={submit} className={pageContainerClass}>
     <PageHeader
       eyebrow="Personal settings"
       title="Profile"

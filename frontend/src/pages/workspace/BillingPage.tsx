@@ -5,7 +5,7 @@ import { WorkspaceDataStatus } from "@/components/workspace-data-status";
 import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { cn } from "@/lib/utils";
-import { buttonClass, controlClass, PageHeader, Panel, primaryButtonClass, Segmented, StatusBadge } from "./_shared";
+import { buttonClass, controlClass, PageHeader, Panel, primaryButtonClass, Segmented, StatusBadge, pageContainerClass } from "./_shared";
 
 const plans = [
   { id: "free", name: "Free", monthly: 0, description: "For personal servers and evaluation.", features: ["1 server", "1 member", "1 GB backups", "Community support"] },
@@ -45,7 +45,7 @@ export function BillingPage() {
     catch (error) { toast.error(error instanceof Error ? error.message : "Unable to change plan"); }
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Subscription" title="Plan & billing" description="Manage your Orbit plan, invoices, and workspace consumption." actions={<button className={buttonClass} onClick={() => toast.info(live ? "A hosted billing portal endpoint is not configured." : "Preview billing portal opened")}><ExternalLink className="size-3.5" />Billing portal</button>} />
     <WorkspaceDataStatus live={live} loading={resource.loading} error={resource.error} onRetry={() => void resource.refresh().catch(() => undefined)} />
     <div className="grid overflow-hidden rounded-xl border border-white/[0.07] bg-[#101218] sm:grid-cols-4"><div className="p-4 sm:border-r sm:border-white/[0.06]"><p className="text-[9px] uppercase tracking-wider text-zinc-600">Current plan</p><div className="mt-2 flex items-center gap-2"><strong className="text-xl text-zinc-100">{planTitle(currentPlan)}</strong>{data.subscription ? <StatusBadge status={data.subscription.status} /> : null}</div></div><div className="border-t border-white/[0.06] p-4 sm:border-r sm:border-t-0"><p className="text-[9px] uppercase tracking-wider text-zinc-600">Renewal</p><p className="mt-2 text-lg font-semibold text-zinc-100">{data.subscription?.currentPeriodEnd ? new Date(data.subscription.currentPeriodEnd).toLocaleDateString() : "Not scheduled"}</p></div><div className="border-t border-white/[0.06] p-4 sm:border-r sm:border-t-0"><p className="text-[9px] uppercase tracking-wider text-zinc-600">Next total</p><p className="mt-2 text-lg font-semibold text-zinc-100">{money(data.subscription?.amountCents, data.subscription?.currency)}</p></div><div className="border-t border-white/[0.06] p-4 sm:border-t-0"><p className="text-[9px] uppercase tracking-wider text-zinc-600">Payment</p><p className="mt-2 text-lg font-semibold text-zinc-100">{live ? "Provider managed" : `Visa ${payment}`}</p></div></div>

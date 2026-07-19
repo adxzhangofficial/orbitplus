@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { relativeTime } from "@/lib/utils";
 import type { Deployment } from "@/types";
-import { buttonClass, controlClass, EmptyState, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass } from "./_shared";
+import { buttonClass, controlClass, EmptyState, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass, pageContainerClass } from "./_shared";
 
 type ServerOption = { id: string; workspaceId: string; name: string; environment: "development" | "staging" | "production" };
 type BackendDeployment = { id: string; workspaceId: string; serverId: string; serverName?: string; name: string; environment: string; version: string; previousVersion?: string; status: string; commitSha?: string; metadata?: Record<string, unknown>; createdAt: string; completedAt?: string };
@@ -63,7 +63,7 @@ export function DeploymentsPage() {
   }
 
   const liveEnvironments = [...new Set(items.map((item) => item.environment.toLowerCase()))];
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Release operations" title="Deployments" description="Promote code with guarded releases, health checks, and instant rollback points." actions={<button className={primaryButtonClass} onClick={() => setOpen(true)}><Plus className="size-3.5" />New deployment</button>} />
     <WorkspaceDataStatus live={live} loading={deployments.loading || servers.loading} error={deployments.error ?? servers.error} onRetry={() => { void deployments.refresh().catch(() => undefined); void servers.refresh().catch(() => undefined); }} />
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Successful" value={items.filter((item) => item.status === "ready").length} detail="Loaded deployment history" icon={CheckCircle2} tone="emerald" /><Stat label="Building" value={items.filter((item) => item.status === "building").length} detail="Live pipeline" icon={Rocket} tone="indigo" /><Stat label="Failed" value={items.filter((item) => item.status === "failed").length} detail="Requires review" icon={XCircle} tone="rose" /><Stat label="Targets" value={new Set(items.map((item) => item.environment)).size} detail="Deployment environments" icon={Clock3} tone="sky" /></div>

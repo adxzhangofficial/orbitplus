@@ -3,7 +3,7 @@ import { BookOpenCheck, CheckCircle2, Play, Plus, SearchX, Trash2, XCircle } fro
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { cn, relativeTime } from "@/lib/utils";
-import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge } from "./_shared";
+import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, pageContainerClass } from "./_shared";
 
 /**
  * Saved, reviewable command sequences.
@@ -133,7 +133,7 @@ export function RunbooksPage() {
     }
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader
       eyebrow="Operations"
       title="Runbooks"

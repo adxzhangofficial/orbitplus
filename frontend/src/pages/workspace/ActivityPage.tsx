@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { useLiveResource } from "@/lib/use-live-resource";
 import { relativeTime } from "@/lib/utils";
 import type { ActivityEvent } from "@/types";
-import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass } from "./_shared";
+import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, SearchField, Stat, StatusBadge, tableClass, tableWrapClass, tdClass, thClass, pageContainerClass } from "./_shared";
 
 type BackendActivity = { id: string; action: string; resourceType: string; resourceId?: string; requestId?: string; ipAddress?: string; metadata?: { statusCode?: number; path?: string }; createdAt: string; actor?: string; actorEmail?: string };
 function initials(name: string) { return name.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "SY"; }
@@ -34,7 +34,7 @@ export function ActivityPage() {
     const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "orbit-audit-log.json"; anchor.click(); URL.revokeObjectURL(url); toast.success("Audit export downloaded");
   }
 
-  return <div className="space-y-5">
+  return <div className={pageContainerClass}>
     <PageHeader eyebrow="Governance" title="Activity & audit log" description="An immutable trail of changes, sessions, deployments, and security events across the workspace." actions={<button className={buttonClass} onClick={exportLog}><Download className="size-3.5" />Export JSON</button>} />
     <WorkspaceDataStatus live={live} loading={resourceState.loading} error={resourceState.error} onRetry={() => void resourceState.refresh().catch(() => undefined)} />
     <div className="grid gap-3 sm:grid-cols-3"><Stat label="Events today" value={today} detail={`${events.length} loaded records`} icon={Activity} /><Stat label="Elevated events" value={events.filter((event) => event.severity === "critical" || event.severity === "warning").length} detail="Derived from method and response" icon={ShieldCheck} tone="rose" /><Stat label="Audit retention" value={live ? "Policy" : "365d"} detail={live ? "Controlled by workspace storage" : "Preview plan policy"} icon={FileClock} tone="sky" /></div>

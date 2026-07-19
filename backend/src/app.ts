@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { env } from "./config/env.js";
 import { activityRouter } from "./routes/activity.routes.js";
+import { adminActionsRouter } from "./routes/admin-actions.routes.js";
 import { adminRouter } from "./routes/admin.routes.js";
 import { agentRouter } from "./routes/agent.routes.js";
 import { apiKeysRouter } from "./routes/api-keys.routes.js";
@@ -93,6 +94,7 @@ export function createApp() {
   const admin = Router();
   admin.use(authenticate, requirePlatformAdmin);
   admin.use(adminRouter);
+  admin.use(adminActionsRouter);
   // Mount platform routes before the catch-all customer router so an admin is
   // never forced through tenant resolution just to operate the control plane.
   api.use("/admin", admin);
