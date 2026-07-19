@@ -30,7 +30,17 @@ interface BreakerState {
 }
 
 const MAX_PER_SERVER = 3;
-const IDLE_TIMEOUT_MS = 60_000;
+/**
+ * How long a connection is held open with nobody using it.
+ *
+ * Long enough that a session of ordinary work never pays a handshake again:
+ * reading a file, thinking, and clicking somewhere else stays inside one
+ * connection. Keepalive traffic holds the session open across it, so the limit
+ * is our own resource budget rather than any network timeout. Bounded because
+ * an open SSH session is a standing capability on someone's production server,
+ * and holding one for a user who wandered off hours ago is not defensible.
+ */
+const IDLE_TIMEOUT_MS = 15 * 60_000;
 /** Long enough to outlive a slow handshake, short enough that a dead host is
  *  not re-probed on every keystroke. Grows with consecutive failures. */
 const BREAKER_BASE_MS = 15_000;
@@ -105,6 +115,18 @@ export async function acquire(
   }
 
   const entries = entriesFor(server.id);
+
+  // A pooled connection can die between requests: the server restarts, the
+  // network blips, sshd times it out. Handing one of those to a caller turns an
+  // ordinary click into an error, so dead entries are dropped and the caller
+  // transparently gets a fresh connection instead.
+  for (const candidate of [...entries]) {
+    const adapter = candidate.adapter as { alive?: boolean };
+    if (!candidate.inUse && adapter.alive === false) {
+      void closeEntry(server.id, candidate);
+    }
+  }
+
   let entry = entries.find((candidate) => !candidate.inUse);
 
   if (!entry && entries.length < MAX_PER_SERVER) {

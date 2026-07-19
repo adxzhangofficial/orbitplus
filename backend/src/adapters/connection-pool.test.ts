@@ -31,6 +31,7 @@ function stubServer(id: string): ServerConnectionRecord {
 
 function stubAdapter(): RemoteFilesystem {
   return {
+    alive: true,
     async connect() {
       if (failNextConnects > 0) {
         failNextConnects -= 1;
@@ -92,6 +93,33 @@ describe("Connection reuse", () => {
     await release(true);
     expect(disconnectCount).toBe(1);
     expect(poolStats().find((entry) => entry.serverId === server.id)).toBeUndefined();
+  });
+
+  it("replaces a pooled connection that died between requests", async () => {
+    const server = stubServer(`dead-${Date.now()}`);
+    const first = await acquire(server, stubAdapter);
+    // Simulate the transport going away while nobody was using it: the server
+    // restarted, the network blipped, or sshd timed the session out.
+    (first.adapter as unknown as { alive: boolean }).alive = false;
+    await first.release();
+
+    const second = await acquire(server, stubAdapter);
+    await second.release();
+
+    // A second handshake happened rather than the dead connection being handed
+    // out, which would have failed the caller's request.
+    expect(connectCount).toBe(2);
+    expect(second.adapter).not.toBe(first.adapter);
+  });
+
+  it("keeps handing back a connection that is still alive", async () => {
+    const server = stubServer(`alive-${Date.now()}`);
+    const first = await acquire(server, stubAdapter);
+    await first.release();
+    const second = await acquire(server, stubAdapter);
+    await second.release();
+    expect(connectCount).toBe(1);
+    expect(second.adapter).toBe(first.adapter);
   });
 
   it("drops idle connections on sweep", async () => {

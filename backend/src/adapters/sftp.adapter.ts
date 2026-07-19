@@ -26,6 +26,16 @@ export class SftpAdapter implements RemoteFilesystem {
    */
   public capturedFingerprint: string | null = null;
 
+  /**
+   * False once the transport has gone away.
+   *
+   * A pooled connection can die between requests without anyone noticing: the
+   * server restarts, the network blips, or an idle timeout fires. Handing such
+   * a connection to the next caller turns an ordinary click into an error, so
+   * the pool checks this and reconnects instead.
+   */
+  public alive = false;
+
   async connect(): Promise<void> {
     const suppliedFingerprint = this.server.host_fingerprint?.trim();
     // No pin yet means this is the first connection to this server. OpenSSH
@@ -56,6 +66,12 @@ export class SftpAdapter implements RemoteFilesystem {
       // must surface quickly instead of stalling the UI.
       readyTimeout: 8_000,
       retries: 0,
+      // Without these a pooled connection is silently dropped by NAT, a
+      // firewall, or sshd's own ClientAliveInterval, and the next request
+      // discovers it only by failing. Traffic every 15 seconds keeps the
+      // session established for as long as it is pooled.
+      keepaliveInterval: 15_000,
+      keepaliveCountMax: 3,
       hostHash: "sha256",
       hostVerifier: (fingerprint: string) => {
         const presented = fingerprint.toLowerCase().replace(/:/g, "");
@@ -73,12 +89,23 @@ export class SftpAdapter implements RemoteFilesystem {
     }
     try {
       await this.client.connect(options);
+      this.alive = true;
+      // The transport announces its own death. Recording it here is what lets
+      // the pool discard a connection instead of failing a user's request with
+      // it. Errors are swallowed deliberately: an unhandled 'error' on the
+      // underlying stream would otherwise take the process down.
+      const markDead = () => { this.alive = false; };
+      this.client.on("end", markDead);
+      this.client.on("close", markDead);
+      this.client.on("error", markDead);
     } catch (error) {
+      this.alive = false;
       throw new AppError(502, "SFTP_CONNECTION_FAILED", error instanceof Error ? error.message : "SFTP connection failed");
     }
   }
 
   async disconnect(): Promise<void> {
+    this.alive = false;
     try { await this.client.end(); } catch { /* connection may never have opened */ }
   }
 
