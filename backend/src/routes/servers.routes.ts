@@ -11,7 +11,7 @@ import { generateToken, hashToken } from "../lib/tokens.js";
 import { enqueue, QUEUES } from "../queue/index.js";
 import { installOrbitKey } from "../services/key-provisioning.service.js";
 import { agentReportingReachable } from "../services/agent-install.service.js";
-import { badRequest, conflict, notFound } from "../lib/errors.js";
+import { AppError, badRequest, conflict, notFound } from "../lib/errors.js";
 import { pagination, pageMeta } from "../lib/pagination.js";
 import { requireRole } from "../middleware/auth.js";
 import { routeParam } from "../lib/route-param.js";
@@ -269,6 +269,34 @@ serversRouter.get(
     );
     const reach = agentReportingReachable();
     response.json({ data: { ...(result.rows[0] ?? { status: "none" }), deploymentReachable: reach.reachable, deploymentReason: reach.reason } });
+  }),
+);
+
+/**
+ * Retries the install.
+ *
+ * Installing happens automatically when a server is connected, but that can
+ * fail for reasons the customer fixes themselves: granting the connecting user
+ * root, installing curl, or making this deployment reachable. This is how they
+ * try again afterwards.
+ */
+serversRouter.post(
+  "/:id/agent/install",
+  requireRole("admin"),
+  asyncHandler(async (request, response) => {
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "id"));
+    if (server.adapter_mode !== "sftp") {
+      throw badRequest("The demo adapter reads local storage directly and needs no agent");
+    }
+    const reach = agentReportingReachable();
+    if (!reach.reachable) {
+      throw new AppError(400, "AGENT_UNREACHABLE_DEPLOYMENT", reach.reason ?? "Agents cannot reach this deployment");
+    }
+    const jobId = await enqueue(QUEUES.agentInstall, {
+      serverId: server.id,
+      organizationId: request.tenant!.organizationId,
+    });
+    response.status(202).json({ data: { status: "installing", jobId } });
   }),
 );
 

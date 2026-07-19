@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Badge, Button, Field, Input, Modal, Progress, Select, StatusBadge, Table, TableHead, TableWrap, Td, Th, Tr } from "@/components/ui";
 import { MetricBar, MetricValue } from "@/components/metric-value";
+import { ConnectionProgress, useConnectionProgress } from "@/components/connection-progress";
 import { api } from "@/lib/api";
 import { cn, relativeTime } from "@/lib/utils";
 import type { Server } from "@/types";
@@ -40,9 +41,57 @@ const blankConnection = {
 
 interface DiscoveredKey { fingerprint: string; sha256: string; keyType: string; advisory: string; }
 
+interface AgentState { status: string; lastError?: string; deploymentReachable?: boolean; deploymentReason?: string; }
+interface IndexState { status: string; entryCount?: number; errorMessage?: string; }
+
+/**
+ * Waits for a queued job to reach a terminal state.
+ *
+ * Installing the agent and walking the tree both run on the queue, so the
+ * request that starts them returns immediately. Polling is what lets the
+ * progress list show them completing instead of jumping straight to done.
+ */
+async function pollUntil<T>(
+  load: () => Promise<T>,
+  settled: (value: T) => boolean,
+  { attempts = 20, intervalMs = 1500 } = {},
+): Promise<T> {
+  let last = await load();
+  for (let index = 0; index < attempts && !settled(last); index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    last = await load();
+  }
+  return last;
+}
+
+async function waitForAgent(serverId: string): Promise<{ installed: boolean; reason?: string }> {
+  const state = await pollUntil(
+    () => api.get<AgentState>(`/servers/${serverId}/agent`),
+    (value) => value.status === "active" || Boolean(value.lastError),
+    { attempts: 12 },
+  );
+  if (state.status === "active") return { installed: true };
+  // Reported ahead of any install error: on a deployment a remote host cannot
+  // reach, no install can ever succeed and the reason is the address, not the
+  // server.
+  if (state.deploymentReachable === false) return { installed: false, reason: state.deploymentReason };
+  return { installed: false, reason: state.lastError ?? "Still installing" };
+}
+
+async function waitForIndex(serverId: string): Promise<{ entries: number }> {
+  const state = await pollUntil(
+    () => api.get<IndexState>(`/servers/${serverId}/files/index`),
+    (value) => ["ready", "failed", "unsupported"].includes(value.status),
+    { attempts: 16 },
+  );
+  if (state.status !== "ready") throw new Error(state.errorMessage ?? `Indexing ${state.status}`);
+  return { entries: state.entryCount ?? 0 };
+}
+
 export function ServersPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [servers, setServers] = useState<Server[]>([]);
+  const progress = useConnectionProgress();
   const [discovering, setDiscovering] = useState(false);
   const [discovered, setDiscovered] = useState<DiscoveredKey>();
   const [discoverError, setDiscoverError] = useState<string>();
@@ -73,15 +122,15 @@ export function ServersPage() {
           protocol: "SFTP",
           region: index === 0 && item.host.endsWith("orbit.local") ? "Demo region · Local worker" : "Customer managed",
           provider: "Orbit worker",
-          latency: item.lastLatencyMs ?? 8,
-          cpu: index === 0 ? 38 : 0,
-          memory: index === 0 ? 64 : 0,
-          disk: index === 0 ? 47 : 0,
-          uptime: "99.99%",
+          latency: item.lastLatencyMs ?? null,
+          cpu: null,
+          memory: null,
+          disk: null,
+          uptime: "—",
           lastSeen: item.lastCheckedAt ?? new Date().toISOString(),
-          tags: [item.environment, "api"],
+          tags: [item.environment],
           fingerprint: item.hostFingerprint,
-          starred: index === 0,
+          starred: false,
         })));
       })
       .catch(() => undefined);
@@ -145,10 +194,23 @@ export function ServersPage() {
   }
   async function saveConnection() {
     if (!tested) return;
+    // Announced up front so the sequence is visible from the first moment
+    // rather than after the last request settles.
+    progress.begin([
+      { id: "workspace", label: "Preparing workspace" },
+      { id: "save", label: "Saving connection and encrypting credentials" },
+      { id: "verify", label: "Verifying connection" },
+      { id: "agent", label: "Installing the read-only agent" },
+      { id: "index", label: "Indexing the remote file tree" },
+    ]);
     try {
-      const workspaces = await api.get<Array<{ id: string }>>("/workspaces");
-      if (!workspaces[0]) throw new Error("Create a workspace before connecting a server.");
-      const created = await api.post<{
+      const workspaces = await progress.run(
+        "workspace",
+        () => api.get<Array<{ id: string }>>("/workspaces"),
+        { detail: (rows) => (rows[0] ? "Primary workspace ready" : "") },
+      );
+      if (!workspaces?.[0]) throw new Error("Create a workspace before connecting a server.");
+      const created = await progress.run("save", () => api.post<{
         id: string; name: string; host: string; port: number; username: string; rootPath: string;
         environment: Server["environment"]; status: string; hostFingerprint?: string;
       }>("/servers", {
@@ -157,8 +219,26 @@ export function ServersPage() {
         description: "Connected from the Orbit workspace",
         environment: connection.environment,
         ...connectionPayload,
+      }), { detail: (row) => `Stored as ${row.id.slice(0, 8)}` });
+      if (!created) throw new Error("The server could not be saved.");
+
+      const health = await progress.run(
+        "verify",
+        () => api.post<{ latencyMs: number }>(`/servers/${created.id}/test`, {}),
+        { detail: (result) => `Responded in ${result.latencyMs} ms` },
+      ) ?? { latencyMs: 0 };
+
+      // Both run on the queue, so these poll for the outcome rather than
+      // waiting on the request that started them.
+      await progress.run("agent", () => waitForAgent(created.id), {
+        optional: true,
+        detail: (state) => state.installed ? "Reporting resource usage" : (state.reason ?? "Not installed"),
       });
-      const health = await api.post<{ latencyMs: number }>(`/servers/${created.id}/test`, {});
+      await progress.run("index", () => waitForIndex(created.id), {
+        optional: true,
+        detail: (state) => state.entries ? `${state.entries.toLocaleString()} entries indexed` : "Indexing continues in the background",
+      });
+      progress.finish();
       const server: Server = {
         id: created.id,
         name: created.name,
@@ -216,7 +296,7 @@ export function ServersPage() {
         {filtered.length ? view === "grid" ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{filtered.map((server) => <article key={server.id} className="group rounded-lg border border-border bg-card transition-colors hover:border-white/20"><div className="flex items-start gap-3 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground"><ServerIcon className="size-4" /></span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><Link to={`/workspace/servers/${server.id}`} className="truncate text-xs font-medium hover:underline">{server.name}</Link>{server.starred && <Star className="size-3 fill-amber-300 text-amber-300" />}</div><p className="mt-1 truncate font-mono text-[8px] text-zinc-600">{server.username}@{server.host}:{server.port}</p></div><StatusBadge status={server.status} /></div><div className="grid grid-cols-3 border-y border-border"><div className="border-r border-border p-3"><p className="text-[8px] text-muted-foreground">CPU</p><strong className="mt-1 block text-sm tabular-nums"><MetricValue value={server.cpu} /></strong><div className="mt-2"><MetricBar value={server.cpu} /></div></div><div className="border-r border-border p-3"><p className="text-[8px] text-muted-foreground">Memory</p><strong className="mt-1 block text-sm tabular-nums"><MetricValue value={server.memory} /></strong><div className="mt-2"><MetricBar value={server.memory} /></div></div><div className="p-3"><p className="text-[8px] text-muted-foreground">Disk</p><strong className="mt-1 block text-sm tabular-nums"><MetricValue value={server.disk} /></strong><div className="mt-2"><MetricBar value={server.disk} /></div></div></div><div className="flex items-center gap-2 px-4 py-3"><Badge>{server.environment}</Badge>{server.tags.slice(0, 2).map((tag) => <span key={tag} className="text-[8px] text-zinc-600">#{tag}</span>)}<span className="ml-auto font-mono text-[8px] text-zinc-600">{server.latency ? `${server.latency} ms` : relativeTime(server.lastSeen)}</span></div><div className="grid grid-cols-3 border-t border-border"><Link to={`/workspace/servers/${server.id}/files`} className="flex h-9 items-center justify-center gap-1.5 border-r border-border text-[9px] text-zinc-500 hover:bg-muted hover:text-white"><ServerIcon className="size-3" />Files</Link><Link to={`/workspace/terminal?server=${server.id}`} className="flex h-9 items-center justify-center gap-1.5 border-r border-border text-[9px] text-zinc-500 hover:bg-muted hover:text-white"><Terminal className="size-3" />Terminal</Link><Link to={`/workspace/servers/${server.id}`} className="flex h-9 items-center justify-center gap-1.5 text-[9px] text-zinc-500 hover:bg-muted hover:text-white">Details<ChevronRight className="size-3" /></Link></div></article>)}</div> : <TableWrap className="mt-4"><Table><TableHead><tr><Th>Server</Th><Th>Environment</Th><Th>Status</Th><Th>Region</Th><Th>Resources</Th><Th>Last seen</Th><Th /></tr></TableHead><tbody>{filtered.map((server) => <Tr key={server.id}><Td><Link to={`/workspace/servers/${server.id}`} className="flex items-center gap-2.5"><span className="grid size-7 place-items-center rounded-md bg-muted"><ServerIcon className="size-3.5" /></span><span><strong className="block text-[10px]">{server.name}</strong><span className="font-mono text-[8px] text-zinc-600">{server.host}</span></span></Link></Td><Td><Badge>{server.environment}</Badge></Td><Td><StatusBadge status={server.status} /></Td><Td className="text-zinc-500">{server.region}</Td><Td><span className="font-mono text-[8px] text-zinc-500">{server.cpu}% · {server.memory}% · {server.disk}%</span></Td><Td className="text-zinc-600">{relativeTime(server.lastSeen)}</Td><Td><Button variant="ghost" size="icon"><MoreHorizontal /></Button></Td></Tr>)}</tbody></Table></TableWrap> : <div className="mt-5 grid min-h-64 place-items-center rounded-lg border border-dashed border-border"><div className="text-center"><ServerIcon className="mx-auto size-5 text-zinc-700" /><p className="mt-3 text-xs">No servers match</p><p className="mt-1 text-[9px] text-muted-foreground">Clear filters or connect a new server.</p><Button size="sm" className="mt-4" onClick={() => { setQuery(""); setEnvironment("all"); setStatus("all"); }}>Clear filters</Button></div></div>}
       </div>
 
-      <Modal open={newOpen} onClose={close} title="Connect a server" description={`Step ${step} of 3 · ${step === 1 ? "Connection details" : step === 2 ? "Authentication and trust" : "Verify and save"}`} size="lg" footer={<>{step > 1 && <Button variant="ghost" onClick={() => setStep((value) => value - 1)}>Back</Button>}<div className="flex-1" /><Button variant="outline" onClick={close}>Cancel</Button>{step < 3 ? <Button onClick={() => setStep((value) => value + 1)} disabled={(step === 1 && (!connection.name || !connection.host)) || (step === 2 && (!connection.username || !connection.secret))}>Continue<ChevronRight /></Button> : <Button onClick={saveConnection} disabled={!tested}>Save connection</Button>}</>}>
+      <Modal open={newOpen} onClose={close} title="Connect a server" description={`Step ${step} of 3 · ${step === 1 ? "Connection details" : step === 2 ? "Authentication and trust" : "Verify and save"}`} size="lg" footer={<>{step > 1 && <Button variant="ghost" onClick={() => setStep((value) => value - 1)}>Back</Button>}<div className="flex-1" /><Button variant="outline" onClick={close}>Cancel</Button>{step < 3 ? <Button onClick={() => setStep((value) => value + 1)} disabled={(step === 1 && (!connection.name || !connection.host)) || (step === 2 && (!connection.username || !connection.secret))}>Continue<ChevronRight /></Button> : <Button onClick={saveConnection} disabled={!tested || progress.running}>{progress.running ? "Connecting…" : null}Save connection</Button>}</>}>
         <div className="mb-6 grid grid-cols-3 gap-2">{[1, 2, 3].map((item) => <div key={item} className={cn("h-1 rounded-full", item <= step ? "bg-blue-500" : "bg-zinc-800")} />)}</div>
         {step === 1 && <div className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><Field label="Server name"><Input value={connection.name} onChange={update("name")} placeholder="Production API" autoFocus /></Field><Field label="Environment"><Select className="w-full" value={connection.environment} onChange={update("environment")}><option value="production">Production</option><option value="staging">Staging</option><option value="development">Development</option></Select></Field></div><div className="grid grid-cols-[1fr_100px] gap-4"><Field label="Hostname or IP"><Input value={connection.host} onChange={update("host")} placeholder="api.example.com" /></Field><Field label="Port"><Input value={connection.port} onChange={update("port")} type="number" /></Field></div><Field label="Allowed root path" hint="Orbit will canonicalize and enforce this root for all file operations."><Input value={connection.rootPath} onChange={update("rootPath")} placeholder="/var/www/app" /></Field></div>}
         {step === 2 && (
@@ -244,7 +324,7 @@ export function ServersPage() {
             <div className="rounded-lg border border-blue-400/15 bg-blue-400/[0.04] p-3"><div className="flex gap-3"><KeyRound className="mt-0.5 size-3.5 text-blue-300" /><div><p className="text-[10px] font-medium text-blue-200">Credentials stay server-side</p><p className="mt-1 text-[9px] leading-4 text-blue-200/55">Secrets are sent only to the authenticated API, encrypted before storage, and never returned to the browser or exposed in logs.</p></div></div></div>
           </div>
         )}
-        {step === 3 && <div><div className="rounded-lg border border-border bg-black/15 p-4"><div className="grid gap-4 sm:grid-cols-2">{[["Name", connection.name], ["Environment", connection.environment], ["Endpoint", `${connection.host}:${connection.port}`], ["Identity", `${connection.username} · ${connection.authenticationType === "privateKey" ? "private key" : "password"}`], ["Allowed root", connection.rootPath], ["Host trust", connection.hostFingerprint]].map(([label, value]) => <div key={label}><p className="text-[8px] uppercase tracking-wider text-zinc-600">{label}</p><p className="mt-1 truncate font-mono text-[9px] text-zinc-300">{value}</p></div>)}</div></div><button type="button" disabled={testing} onClick={() => void testConnection()} className={cn("mt-4 flex w-full items-center gap-3 rounded-lg border p-4 text-left", tested ? "border-emerald-400/20 bg-emerald-400/[0.04]" : "border-border hover:bg-white/[0.02]")}><span className={cn("grid size-8 place-items-center rounded-md", tested ? "bg-emerald-400/10 text-emerald-300" : "bg-muted text-muted-foreground")}>{testing ? <RefreshCw className="size-3.5 animate-spin" /> : tested ? <Check className="size-3.5" /> : <ShieldCheck className="size-3.5" />}</span><span className="min-w-0 flex-1"><strong className="block text-[10px]">{testing ? "Testing connection…" : tested ? "Connection and host verified" : "Test connection before saving"}</strong><span className="mt-1 block text-[8px] text-zinc-600">{tested ? "Pinned fingerprint and allowed root verified by the SFTP worker" : "Reachability, authentication, fingerprint, and root permissions"}</span></span></button></div>}
+        {step === 3 && progress.steps.length > 0 && <div className="rounded-lg border border-border bg-black/15 p-4"><p className="mb-3 text-[10px] font-medium text-zinc-300">Connecting {connection.name || connection.host}</p><ConnectionProgress steps={progress.steps} /></div>}{step === 3 && progress.steps.length === 0 && <div><div className="rounded-lg border border-border bg-black/15 p-4"><div className="grid gap-4 sm:grid-cols-2">{[["Name", connection.name], ["Environment", connection.environment], ["Endpoint", `${connection.host}:${connection.port}`], ["Identity", `${connection.username} · ${connection.authenticationType === "privateKey" ? "private key" : "password"}`], ["Allowed root", connection.rootPath], ["Host trust", connection.hostFingerprint]].map(([label, value]) => <div key={label}><p className="text-[8px] uppercase tracking-wider text-zinc-600">{label}</p><p className="mt-1 truncate font-mono text-[9px] text-zinc-300">{value}</p></div>)}</div></div><button type="button" disabled={testing} onClick={() => void testConnection()} className={cn("mt-4 flex w-full items-center gap-3 rounded-lg border p-4 text-left", tested ? "border-emerald-400/20 bg-emerald-400/[0.04]" : "border-border hover:bg-white/[0.02]")}><span className={cn("grid size-8 place-items-center rounded-md", tested ? "bg-emerald-400/10 text-emerald-300" : "bg-muted text-muted-foreground")}>{testing ? <RefreshCw className="size-3.5 animate-spin" /> : tested ? <Check className="size-3.5" /> : <ShieldCheck className="size-3.5" />}</span><span className="min-w-0 flex-1"><strong className="block text-[10px]">{testing ? "Testing connection…" : tested ? "Connection and host verified" : "Test connection before saving"}</strong><span className="mt-1 block text-[8px] text-zinc-600">{tested ? "Pinned fingerprint and allowed root verified by the SFTP worker" : "Reachability, authentication, fingerprint, and root permissions"}</span></span></button></div>}
       </Modal>
     </>
   );
