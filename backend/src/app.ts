@@ -23,6 +23,7 @@ import { plansRouter } from "./routes/plans.routes.js";
 import { serversRouter } from "./routes/servers.routes.js";
 import { teamRouter } from "./routes/team.routes.js";
 import { transfersRouter } from "./routes/transfers.routes.js";
+import { webhooksRouter } from "./routes/webhooks.routes.js";
 import { workspacesRouter } from "./routes/workspaces.routes.js";
 import { authenticate, requirePlatformAdmin, resolveTenant } from "./middleware/auth.js";
 import { auditMutations } from "./middleware/audit.js";
@@ -40,6 +41,11 @@ export function createApp() {
     allowedHeaders: ["Content-Type", "Authorization", "X-Organization-Id", "X-Request-Id", "X-Orbit-Client"],
   }));
   app.use(compression());
+
+  // Webhooks mount before express.json: signature verification runs over the
+  // exact bytes the provider signed, and parsing would change them.
+  app.use("/api/v1/webhooks", webhooksRouter);
+
   app.use(express.json({ limit: "4mb" }));
   app.use(express.urlencoded({ extended: false, limit: "1mb" }));
   app.use(auditMutations);

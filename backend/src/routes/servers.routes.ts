@@ -9,6 +9,7 @@ import { pagination, pageMeta } from "../lib/pagination.js";
 import { requireRole } from "../middleware/auth.js";
 import { routeParam } from "../lib/route-param.js";
 import { publicServerColumns, serverForTenant } from "../services/server.service.js";
+import { assertWithinLimit } from "../services/usage.service.js";
 
 const credentialsSchema = z.object({
   password: z.string().max(1024).optional(),
@@ -145,6 +146,9 @@ serversRouter.post(
   requireRole("admin"),
   asyncHandler(async (request, response) => {
     const input = serverSchema.parse(request.body);
+    // Checked before any credential work so an over-limit tenant gets a clear
+    // 402 rather than a validation error about something unrelated.
+    await assertWithinLimit(request.tenant!.organizationId, request.tenant!.plan, "servers");
     validateCredentials(input);
     const organization = await pool.query<{ plan: string }>("SELECT plan FROM organizations WHERE id = $1", [request.tenant!.organizationId]);
     const serverCount = await pool.query<{ count: number }>("SELECT count(*)::integer AS count FROM server_connections WHERE organization_id = $1", [request.tenant!.organizationId]);

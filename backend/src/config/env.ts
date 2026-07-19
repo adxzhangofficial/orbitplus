@@ -28,6 +28,12 @@ const envSchema = z.object({
   // local development exercises the full flow with no external dependency.
   RESEND_API_KEY: z.string().min(1).optional(),
   EMAIL_FROM: z.string().default("Orbit+ <onboarding@resend.dev>"),
+  // Billing. Absent keys leave payments disabled and every billing route
+  // reports a clear 503, so the application still boots and self-hosts.
+  STRIPE_SECRET_KEY: z.string().min(1).optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().min(1).optional(),
+  STRIPE_PRICE_PRO: z.string().min(1).optional(),
+
   ACCESS_TOKEN_TTL: z.string().default("15m"),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().positive().default(60),

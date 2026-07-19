@@ -4,8 +4,9 @@ import { z } from "zod";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { sha256 } from "../lib/crypto.js";
-import { badRequest, conflict, notFound } from "../lib/errors.js";
+import { AppError, badRequest, conflict, notFound } from "../lib/errors.js";
 import { requireRole } from "../middleware/auth.js";
+import { planLimits } from "../services/usage.service.js";
 
 export const teamRouter = Router();
 
@@ -35,11 +36,27 @@ teamRouter.post(
   requireRole("admin"),
   asyncHandler(async (request, response) => {
     const input = z.object({ email: z.string().email().transform((value) => value.toLowerCase()), role: z.enum(["viewer", "developer", "admin"]).default("viewer") }).parse(request.body);
-    const organization = await pool.query<{ plan: string }>("SELECT plan FROM organizations WHERE id = $1", [request.tenant!.organizationId]);
-    const active = await pool.query<{ count: number }>("SELECT count(*)::integer AS count FROM memberships WHERE organization_id = $1 AND status = 'active'", [request.tenant!.organizationId]);
-    const pending = await pool.query<{ count: number }>("SELECT count(*)::integer AS count FROM invitations WHERE organization_id = $1 AND status = 'pending'", [request.tenant!.organizationId]);
-    const limit = organization.rows[0]?.plan === "free" ? 1 : organization.rows[0]?.plan === "pro" ? 10 : Infinity;
-    if ((active.rows[0]?.count ?? 0) + (pending.rows[0]?.count ?? 0) >= limit) throw conflict(`The ${organization.rows[0]?.plan} plan member limit has been reached`);
+    // Limits come from plan_limits rather than being hardcoded here, so pricing
+    // can change without a deploy and an enterprise contract can carry its own
+    // values. Pending invitations count against the seat limit.
+    const limits = await planLimits(request.tenant!.plan);
+    if (limits.maxMembers !== null) {
+      const occupied = await pool.query<{ count: number }>(
+        `SELECT (
+           (SELECT count(*) FROM memberships WHERE organization_id = $1 AND status = 'active')
+         + (SELECT count(*) FROM invitations WHERE organization_id = $1 AND status = 'pending')
+         )::integer AS count`,
+        [request.tenant!.organizationId],
+      );
+      if ((occupied.rows[0]?.count ?? 0) >= limits.maxMembers) {
+        throw new AppError(
+          402,
+          "PLAN_LIMIT_REACHED",
+          `Your ${request.tenant!.plan} plan allows ${limits.maxMembers} team members. Upgrade to invite more.`,
+          { resource: "members", limit: limits.maxMembers, plan: request.tenant!.plan },
+        );
+      }
+    }
     const existing = await pool.query(
       `SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
         WHERE m.organization_id = $1 AND lower(u.email) = $2`,

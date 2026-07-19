@@ -12,6 +12,8 @@ declare global {
       tenant?: {
         organizationId: string;
         organizationName: string;
+        /** Drives plan-limit enforcement without a query in every handler. */
+        plan: string;
         role: MembershipRole;
       };
     }

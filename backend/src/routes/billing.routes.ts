@@ -2,8 +2,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
-import { forbidden } from "../lib/errors.js";
+import { AppError, forbidden } from "../lib/errors.js";
 import { requireRole } from "../middleware/auth.js";
+import { createCheckoutSession, createPortalSession, isStripeConfigured } from "../services/stripe.service.js";
+import { usageSnapshot } from "../services/usage.service.js";
 
 const prices = {
   free: { monthly: 0, yearly: 0 },
@@ -44,28 +46,76 @@ billingRouter.get(
   }),
 );
 
+/**
+ * Starts a hosted checkout for a paid plan.
+ *
+ * The plan is never changed here. It moves only when Stripe confirms payment
+ * through the webhook, so a user cannot upgrade themselves by calling the API.
+ */
+billingRouter.post(
+  "/checkout",
+  requireRole("owner"),
+  asyncHandler(async (request, response) => {
+    const input = z.object({ plan: z.enum(["pro"]) }).parse(request.body);
+    if (!isStripeConfigured()) {
+      throw new AppError(503, "BILLING_NOT_CONFIGURED", "Payments are not configured on this deployment");
+    }
+    const url = await createCheckoutSession(request.tenant!.organizationId, input.plan);
+    response.json({ data: { url } });
+  }),
+);
+
+/** Hosted portal for card changes, cancellation, and invoice history. */
+billingRouter.post(
+  "/portal",
+  requireRole("owner"),
+  asyncHandler(async (request, response) => {
+    if (!isStripeConfigured()) {
+      throw new AppError(503, "BILLING_NOT_CONFIGURED", "Payments are not configured on this deployment");
+    }
+    const url = await createPortalSession(request.tenant!.organizationId);
+    response.json({ data: { url } });
+  }),
+);
+
 billingRouter.patch(
   "/plan",
   requireRole("owner"),
   asyncHandler(async (request, response) => {
-    const input = z.object({ plan: z.enum(["free", "pro", "enterprise"]), interval: z.enum(["monthly", "yearly"]).default("monthly") }).parse(request.body);
+    const input = z.object({ plan: z.enum(["free", "pro", "enterprise"]) }).parse(request.body);
     if (input.plan === "enterprise") {
       throw forbidden("Enterprise plans require a signed agreement and platform administrator approval");
     }
-    const amount = prices[input.plan][input.interval];
+    // Upgrades must go through checkout. Allowing a direct plan write here
+    // meant any owner could grant themselves a paid plan without paying.
+    if (input.plan !== "free") {
+      throw new AppError(
+        402,
+        "CHECKOUT_REQUIRED",
+        "Start a checkout session to move to a paid plan",
+        { checkout: "/api/v1/billing/checkout" },
+      );
+    }
+    if (isStripeConfigured()) {
+      throw new AppError(
+        409,
+        "MANAGE_IN_PORTAL",
+        "Cancel your subscription from the billing portal so payment and access stay in sync",
+        { portal: "/api/v1/billing/portal" },
+      );
+    }
+    // Self-hosted deployments without a processor keep the direct path.
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query("UPDATE organizations SET plan = $2 WHERE id = $1", [request.tenant!.organizationId, input.plan]);
+      await client.query("UPDATE organizations SET plan = 'free' WHERE id = $1", [request.tenant!.organizationId]);
       const result = await client.query(
         `INSERT INTO subscriptions(organization_id, plan, interval, amount_cents, status)
-         VALUES($1,$2,$3,$4,'active')
-         ON CONFLICT(organization_id) DO UPDATE SET plan = EXCLUDED.plan, interval = EXCLUDED.interval,
-           amount_cents = EXCLUDED.amount_cents, status = 'active', current_period_start = now(),
-           current_period_end = now() + CASE WHEN EXCLUDED.interval = 'yearly' THEN interval '1 year' ELSE interval '1 month' END
+         VALUES($1,'free','monthly',0,'active')
+         ON CONFLICT(organization_id) DO UPDATE SET plan = 'free', amount_cents = 0, status = 'active'
          RETURNING id, plan, status, interval, amount_cents AS "amountCents", currency,
                    current_period_start AS "currentPeriodStart", current_period_end AS "currentPeriodEnd"`,
-        [request.tenant!.organizationId, input.plan, input.interval, amount],
+        [request.tenant!.organizationId],
       );
       await client.query("COMMIT");
       response.json({ data: result.rows[0] });
@@ -73,5 +123,14 @@ billingRouter.patch(
       await client.query("ROLLBACK");
       throw error;
     } finally { client.release(); }
+  }),
+);
+
+/** Plan limits alongside real consumption, for the usage page and upgrade prompts. */
+billingRouter.get(
+  "/usage",
+  asyncHandler(async (request, response) => {
+    const snapshot = await usageSnapshot(request.tenant!.organizationId, request.tenant!.plan ?? "free");
+    response.json({ data: snapshot });
   }),
 );

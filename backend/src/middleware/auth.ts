@@ -48,10 +48,11 @@ export const resolveTenant = asyncHandler(async (request, _response, next) => {
     organization_id: string;
     organization_name: string;
     organization_status: "active" | "trialing" | "suspended" | "cancelled";
+    organization_plan: string;
     role: MembershipRole;
   }>(
     `SELECT o.id AS organization_id, o.name AS organization_name,
-            o.status AS organization_status, m.role
+            o.status AS organization_status, o.plan AS organization_plan, m.role
        FROM memberships m
        JOIN organizations o ON o.id = m.organization_id
       WHERE m.user_id = $1 AND m.status = 'active' ${organizationFilter}
@@ -68,6 +69,7 @@ export const resolveTenant = asyncHandler(async (request, _response, next) => {
   request.tenant = {
     organizationId: membership.organization_id,
     organizationName: membership.organization_name,
+    plan: membership.organization_plan,
     role: membership.role,
   };
   next();
