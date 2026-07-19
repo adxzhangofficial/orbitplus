@@ -350,6 +350,23 @@ serversRouter.post(
     // Checked before any credential work so an over-limit tenant gets a clear
     // 402 rather than a validation error about something unrelated.
     await assertWithinLimit(request.tenant!.organizationId, request.tenant!.plan, "servers");
+
+    // Workspace policy is enforced here rather than only stored, which is what
+    // makes those settings controls rather than labels.
+    const policy = await pool.query<{ enforce_host_key_pinning: boolean; allow_password_auth: boolean }>(
+      "SELECT enforce_host_key_pinning, allow_password_auth FROM organizations WHERE id = $1",
+      [request.tenant!.organizationId],
+    );
+    const rules = policy.rows[0];
+    if (input.adapterMode === "sftp" && rules) {
+      if (rules.enforce_host_key_pinning && !input.hostFingerprint) {
+        throw badRequest("This workspace requires a pinned host key. Retrieve or paste the server's fingerprint before connecting it.");
+      }
+      if (!rules.allow_password_auth && input.authenticationType === "password") {
+        throw badRequest("This workspace does not allow password authentication. Use a private key instead.");
+      }
+    }
+
     validateCredentials(input);
     const organization = await pool.query<{ plan: string }>("SELECT plan FROM organizations WHERE id = $1", [request.tenant!.organizationId]);
     const serverCount = await pool.query<{ count: number }>("SELECT count(*)::integer AS count FROM server_connections WHERE organization_id = $1", [request.tenant!.organizationId]);

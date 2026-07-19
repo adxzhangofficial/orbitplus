@@ -22,6 +22,7 @@ import { notificationsRouter } from "./routes/notifications.routes.js";
 import { organizationRouter } from "./routes/organization.routes.js";
 import { overviewRouter } from "./routes/overview.routes.js";
 import { plansRouter } from "./routes/plans.routes.js";
+import { profileRouter } from "./routes/profile.routes.js";
 import { serversRouter } from "./routes/servers.routes.js";
 import { teamRouter } from "./routes/team.routes.js";
 import { terminalRouter } from "./routes/terminal.routes.js";
@@ -59,6 +60,11 @@ export function createApp() {
   // Machine-authenticated: agents present their own token, not a user session.
   api.use("/agent", agentRouter);
   api.use("/auth", rateLimit({ windowMs: 60_000, limit: env.NODE_ENV === "test" ? 1_000 : 20, standardHeaders: "draft-8", legacyHeaders: false }), authRouter);
+
+  const account = Router();
+  account.use(authenticate);
+  account.use("/profile", profileRouter);
+  api.use(account);
 
   const customer = Router();
   customer.use(authenticate, resolveTenant);
