@@ -12,6 +12,7 @@ import { runAutomation, sweepDueAutomations } from "./automation.worker.js";
 import { runBackup, runRestore } from "./backup.worker.js";
 import { runRetentionSweep, runSessionPrune, runTokenPrune } from "./maintenance.worker.js";
 import { runTransfer } from "./transfer.worker.js";
+import { runTreeIndex, type TreeIndexJob } from "./tree-index.worker.js";
 
 /**
  * pg-boss delivers a batch, and one poisoned job must not fail its neighbours.
@@ -41,6 +42,9 @@ export async function startWorkers(): Promise<void> {
   await boss.work<BackupJob>(QUEUES.backup, { batchSize: 2 }, batched(runBackup));
   await boss.work<BackupJob & { storageKey: string }>(QUEUES.backupRestore, { batchSize: 2 }, batched(runRestore));
   await boss.work<AutomationJob>(QUEUES.automation, { batchSize: 5 }, batched(runAutomation));
+  // One at a time per worker: a tree walk holds a connection and produces a
+  // large result, so running several concurrently would spike memory.
+  await boss.work<TreeIndexJob>(QUEUES.treeIndex, { batchSize: 1 }, batched(runTreeIndex));
 
   await boss.work(QUEUES.retention, { batchSize: 1 }, async () => {
     const result = await runRetentionSweep();

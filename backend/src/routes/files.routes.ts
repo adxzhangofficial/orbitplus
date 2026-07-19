@@ -14,6 +14,8 @@ import { requireRole } from "../middleware/auth.js";
 import { enforceFileLimit, moveVersionsForTenant, readOptional, readOptionalDeleteSnapshot, saveVersion, versionForTenant, writeVersioned } from "../services/file.service.js";
 import { serverForTenant } from "../services/server.service.js";
 import { invalidate, isFresh, listWithPrefetch, readCached } from "../services/directory-cache.js";
+import { invalidatePath, listFromIndex, markIndexStatus } from "../services/tree-index.service.js";
+import { enqueue, QUEUES } from "../queue/index.js";
 
 const pathQuery = z.object({ path: z.string().max(2048).default("/") });
 const writeSchema = z.object({
@@ -60,6 +62,19 @@ filesRouter.get(
         response.json({ data: cached.entries, meta: { path, count: cached.entries.length, cached: true, ageMs: cached.ageMs } });
         return;
       }
+
+      // The indexed tree covers the whole server from one `find`, so it answers
+      // directories that were never visited in this session. The in-memory
+      // cache above only holds paths already fetched.
+      const indexed = await listFromIndex(server.id, path);
+      if (indexed) {
+        response.setHeader("x-orbit-cache", "index");
+        response.json({
+          data: indexed.entries,
+          meta: { path, count: indexed.entries.length, cached: true, source: "index", indexedAt: indexed.indexedAt },
+        });
+        return;
+      }
     }
 
     const result = await withAdapter(server, (adapter) =>
@@ -77,6 +92,65 @@ filesRouter.get(
         prefetched: result.prefetched,
       },
     });
+  }),
+);
+
+/** Index state, so the UI can say whether the tree is cached and how old it is. */
+filesRouter.get(
+  "/index",
+  asyncHandler(async (request, response) => {
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
+    const result = await pool.query(
+      `SELECT status, entry_count AS "entryCount", truncated, duration_ms AS "durationMs",
+              error_message AS "errorMessage", completed_at AS "completedAt", updated_at AS "updatedAt"
+         FROM remote_index_runs WHERE server_id = $1`,
+      [server.id],
+    );
+    response.json({ data: result.rows[0] ?? { status: "pending", entryCount: 0 } });
+  }),
+);
+
+/**
+ * Walks the whole tree in one command and caches the metadata.
+ *
+ * Queued rather than run inline: a large tree takes seconds, which must not
+ * hold an HTTP connection open, and the queue already handles retries.
+ */
+filesRouter.post(
+  "/index",
+  requireRole("developer"),
+  asyncHandler(async (request, response) => {
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
+    if (server.adapter_mode === "demo") {
+      throw badRequest("The demo adapter reads local storage directly and needs no index");
+    }
+    await markIndexStatus(server, "pending");
+    const jobId = await enqueue(QUEUES.treeIndex, {
+      serverId: server.id,
+      organizationId: request.tenant!.organizationId,
+    });
+    response.status(202).json({ data: { status: "pending", jobId } });
+  }),
+);
+
+/** Name search across the cached tree, with no remote round trip at all. */
+filesRouter.get(
+  "/search",
+  asyncHandler(async (request, response) => {
+    const input = z.object({
+      q: z.string().trim().min(1).max(200),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
+    }).parse(request.query);
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
+    const result = await pool.query(
+      `SELECT name, path, type, size_bytes AS "size", mode AS "permissions", modified_at AS "modifiedAt"
+         FROM remote_entries
+        WHERE server_id = $1 AND lower(name) LIKE '%' || lower($2) || '%'
+        ORDER BY type = 'directory' DESC, length(path), lower(name)
+        LIMIT $3`,
+      [server.id, input.q, input.limit],
+    );
+    response.json({ data: result.rows, meta: { source: "index" } });
   }),
 );
 
@@ -120,6 +194,7 @@ filesRouter.put(
       note: input.note,
     }));
     invalidate(request.tenant!.organizationId, server.id, path);
+    await invalidatePath(server.id, path);
     response.json({ data: { path, size: content.length, checksum: version.checksum, versionId: version.id, versionNumber: version.versionNumber } });
   }),
 );
@@ -203,6 +278,7 @@ filesRouter.post(
     });
 
     invalidate(request.tenant!.organizationId, server.id, directory);
+    await invalidatePath(server.id, directory);
     response.status(201).json({ data: results, meta: { directory, count: results.length } });
   }),
 );
@@ -241,6 +317,7 @@ filesRouter.post(
       return saveVersion({ organizationId: request.tenant!.organizationId, serverId: server.id, path: version.path, content: version.content, userId: request.auth!.userId, operation: "rollback", note: input.note ?? `Restored ${version.id}` });
     });
     invalidate(request.tenant!.organizationId, server.id, version.path);
+    await invalidatePath(server.id, version.path);
     response.json({ data: { path: version.path, restoredFromVersionId: version.id, checksum: restored.checksum, versionNumber: restored.versionNumber } });
   }),
 );
@@ -254,6 +331,7 @@ filesRouter.post(
     const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
     await withAdapter(server, (adapter) => adapter.mkdir(path));
     invalidate(request.tenant!.organizationId, server.id, path);
+    await invalidatePath(server.id, path);
     response.status(201).json({ data: { path, type: "directory" } });
   }),
 );
@@ -278,7 +356,9 @@ filesRouter.post(
       }
     });
     invalidate(request.tenant!.organizationId, server.id, from);
+    await invalidatePath(server.id, from);
     invalidate(request.tenant!.organizationId, server.id, to);
+    await invalidatePath(server.id, to);
     response.json({ data: { from, to } });
   }),
 );
@@ -296,6 +376,7 @@ filesRouter.delete(
       await adapter.delete(path, input.recursive);
     });
     invalidate(request.tenant!.organizationId, server.id, path);
+    await invalidatePath(server.id, path);
     response.status(204).send();
   }),
 );
