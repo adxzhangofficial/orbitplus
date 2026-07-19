@@ -15,13 +15,30 @@ monitoringRouter.get(
   asyncHandler(async (request, response) => {
     const [servers, alerts] = await Promise.all([
       pool.query(
+        // Each metric takes its own freshest non-null value rather than
+        // everything coming from the single latest row. Different sources
+        // supply different fields: an SFTP probe can measure latency but
+        // cannot read CPU, memory, or disk, so taking the latest row alone
+        // meant a probe running after an agent report replaced real numbers
+        // with nulls. Nulls stay null; the interface reports "no data" rather
+        // than rendering them as zero.
         `SELECT s.id AS "serverId", s.name AS "serverName", s.status AS "connectionStatus",
-                m.status, m.cpu_percent AS "cpuPercent", m.memory_percent AS "memoryPercent",
-                m.disk_percent AS "diskPercent", m.latency_ms AS "latencyMs", m.services,
-                m.sampled_at AS "sampledAt"
+                m.status, m."cpuPercent", m."memoryPercent", m."diskPercent",
+                m."latencyMs", m.services, m."sampledAt", m."metricsSampledAt", m."metricsSource"
            FROM server_connections s
            LEFT JOIN LATERAL (
-             SELECT * FROM monitors WHERE server_id = s.id ORDER BY sampled_at DESC LIMIT 1
+             SELECT
+               (SELECT status FROM monitors WHERE server_id = s.id ORDER BY sampled_at DESC LIMIT 1) AS status,
+               (SELECT services FROM monitors WHERE server_id = s.id ORDER BY sampled_at DESC LIMIT 1) AS services,
+               (SELECT sampled_at FROM monitors WHERE server_id = s.id ORDER BY sampled_at DESC LIMIT 1) AS "sampledAt",
+               (SELECT cpu_percent FROM monitors WHERE server_id = s.id AND cpu_percent IS NOT NULL ORDER BY sampled_at DESC LIMIT 1) AS "cpuPercent",
+               (SELECT memory_percent FROM monitors WHERE server_id = s.id AND memory_percent IS NOT NULL ORDER BY sampled_at DESC LIMIT 1) AS "memoryPercent",
+               (SELECT disk_percent FROM monitors WHERE server_id = s.id AND disk_percent IS NOT NULL ORDER BY sampled_at DESC LIMIT 1) AS "diskPercent",
+               (SELECT latency_ms FROM monitors WHERE server_id = s.id AND latency_ms IS NOT NULL ORDER BY sampled_at DESC LIMIT 1) AS "latencyMs",
+               -- When the resource numbers were actually measured, which is
+               -- older than sampledAt whenever only probes have run since.
+               (SELECT sampled_at FROM monitors WHERE server_id = s.id AND cpu_percent IS NOT NULL ORDER BY sampled_at DESC LIMIT 1) AS "metricsSampledAt",
+               (SELECT source FROM monitors WHERE server_id = s.id AND cpu_percent IS NOT NULL ORDER BY sampled_at DESC LIMIT 1) AS "metricsSource"
            ) m ON true WHERE s.organization_id = $1 ORDER BY s.name`,
         [request.tenant!.organizationId],
       ),

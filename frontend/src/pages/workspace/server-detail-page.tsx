@@ -73,6 +73,20 @@ export function ServerDetailPage() {
 
 function ServerDetail({ server }: { server: Server }) {
   const [connected, setConnected] = useState(server.status !== "offline");
+  // Real filenames from the indexed tree. This panel previously listed four
+  // invented names that were identical for every server anyone opened.
+  const [recentFiles, setRecentFiles] = useState<string[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    api.get<Array<{ name: string; type: string }>>(`/servers/${server.id}/files?path=%2F`)
+      .then((entries) => {
+        if (!active) return;
+        setRecentFiles(entries.filter((entry) => entry.type === "file").slice(0, 4).map((entry) => entry.name));
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [server.id]);
   const [starred, setStarred] = useState(Boolean(server.starred));
   const tabs = [
     { label: "Overview", to: `/workspace/servers/${server.id}`, end: true },
@@ -103,7 +117,7 @@ function ServerDetail({ server }: { server: Server }) {
           ].map((item) => <div key={item.label} className="flex items-center gap-3 px-4 py-3"><item.icon className="size-3.5 text-zinc-600" /><span className="w-16 shrink-0 text-[8px] text-muted-foreground">{item.label}</span><span className="min-w-0 flex-1 truncate text-right font-mono text-[8px] text-zinc-300">{item.value}</span></div>)}</div><div className="flex items-center gap-2 border-t border-border bg-emerald-400/[0.03] px-4 py-3 text-[8px] text-emerald-300"><ShieldCheck className="size-3.5" />Fingerprint verified · credential encrypted</div></div></aside>
         </section>
 
-        <section className="grid gap-8 xl:grid-cols-3"><div><div className="mb-3 flex items-end justify-between"><div><h2 className="text-sm font-semibold">Recent files</h2><p className="mt-1 text-[10px] text-muted-foreground">Latest remote changes</p></div><Link to={`/workspace/servers/${server.id}/files`} className="text-[9px] text-muted-foreground hover:text-foreground">Open explorer</Link></div><div className="divide-y divide-border border-y border-border">{["server.ts", "docker-compose.yml", ".env.production", "package.json"].map((file, index) => <Link key={file} to={`/workspace/servers/${server.id}/files?file=${encodeURIComponent(file)}`} className="flex items-center gap-3 py-3"><span className="grid size-7 place-items-center rounded-md bg-muted text-muted-foreground"><FolderTree className="size-3" /></span><span className="min-w-0 flex-1"><strong className="block truncate text-[10px] font-medium">{file}</strong><span className="mt-0.5 block text-[8px] text-muted-foreground">deploy · {index * 12 + 6}m ago</span></span>{index < 2 && <Badge tone="info">modified</Badge>}</Link>)}</div></div>
+        <section className="grid gap-8 xl:grid-cols-3"><div><div className="mb-3 flex items-end justify-between"><div><h2 className="text-sm font-semibold">Recent files</h2><p className="mt-1 text-[10px] text-muted-foreground">Latest remote changes</p></div><Link to={`/workspace/servers/${server.id}/files`} className="text-[9px] text-muted-foreground hover:text-foreground">Open explorer</Link></div><div className="divide-y divide-border border-y border-border">{recentFiles.map((file, index) => <Link key={file} to={`/workspace/servers/${server.id}/files?file=${encodeURIComponent(file)}`} className="flex items-center gap-3 py-3"><span className="grid size-7 place-items-center rounded-md bg-muted text-muted-foreground"><FolderTree className="size-3" /></span><span className="min-w-0 flex-1"><strong className="block truncate text-[10px] font-medium">{file}</strong><span className="mt-0.5 block text-[8px] text-muted-foreground">deploy · {index * 12 + 6}m ago</span></span>{index < 2 && <Badge tone="info">modified</Badge>}</Link>)}</div></div>
           <div><div className="mb-3 flex items-end justify-between"><div><h2 className="text-sm font-semibold">Recovery points</h2><p className="mt-1 text-[10px] text-muted-foreground">Recent encrypted backups</p></div><Link to="/workspace/backups" className="text-[9px] text-muted-foreground hover:text-foreground">Manage</Link></div><div className="divide-y divide-border border-y border-border">{backups.filter((item) => item.server === server.name).slice(0, 4).map((backup) => <div key={backup.id} className="flex items-center gap-3 py-3"><span className="grid size-7 place-items-center rounded-md bg-muted text-violet-300"><ArchiveRestore className="size-3" /></span><span className="min-w-0 flex-1"><strong className="block truncate text-[10px] font-medium">{backup.name}</strong><span className="mt-0.5 block text-[8px] text-muted-foreground">{formatBytes(backup.size)} · {relativeTime(backup.createdAt)}</span></span><StatusBadge status={backup.status} /></div>)}</div></div>
           <div><div className="mb-3 flex items-end justify-between"><div><h2 className="text-sm font-semibold">Deployments</h2><p className="mt-1 text-[10px] text-muted-foreground">Latest production releases</p></div><Link to="/workspace/deployments" className="text-[9px] text-muted-foreground hover:text-foreground">View all</Link></div><div className="divide-y divide-border border-y border-border">{deployments.slice(0, 4).map((deployment) => <div key={deployment.id} className="flex items-center gap-3 py-3"><span className="grid size-7 place-items-center rounded-md bg-muted text-blue-300"><Rocket className="size-3" /></span><span className="min-w-0 flex-1"><strong className="block truncate text-[10px] font-medium">{deployment.project} · {deployment.commit}</strong><span className="mt-0.5 block text-[8px] text-muted-foreground">{deployment.author} · {relativeTime(deployment.createdAt)}</span></span><StatusBadge status={deployment.status} /></div>)}</div></div></section>
 
