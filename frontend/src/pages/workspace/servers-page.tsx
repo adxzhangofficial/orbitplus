@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronRight,
@@ -113,6 +113,19 @@ export function ServersPage() {
    * ssh-keyscan. This is trust on first use: the value is shown for comparison
    * against whatever the provider published, and pinned once saved.
    */
+  const retrieveRef = useRef<() => void>(() => undefined);
+  retrieveRef.current = () => { void retrieveFingerprint(); };
+
+  // Fires on arrival at the authentication step. The host is already known by
+  // then, so the key is fetched without the user having to ask for it.
+  useEffect(() => {
+    if (step !== 2 || !newOpen) return;
+    if (!connection.host || connection.hostFingerprint || discovering) return;
+    retrieveRef.current();
+    // Intentionally keyed on the step and host only: re-running on every
+    // keystroke in the password field would hammer the rate limit.
+  }, [step, newOpen, connection.host]);
+
   async function retrieveFingerprint() {
     setDiscovering(true);
     setDiscoverError(undefined);
@@ -187,6 +200,26 @@ export function ServersPage() {
       setServers((value) => [server, ...value]);
       toast.success(`${server.name} connected`, { description: "Credentials were encrypted and the pinned host key was verified." });
       close();
+
+      // Replace the password with a key Orbit owns, so later connections need
+      // no stored password. The server verifies the new key works before it
+      // switches, and keeps the password if it does not, so a failure here
+      // costs nothing and the connection stays usable either way.
+      if (connection.authenticationType === "password") {
+        try {
+          const provisioned = await api.post<{ publicKey: string; comment: string }>(
+            `/servers/${created.id}/provision-key`,
+            {},
+          );
+          toast.success("Passwordless access set up", {
+            description: `An Orbit key was installed in authorized_keys as ${provisioned.comment}. Your password is no longer stored.`,
+          });
+        } catch (error) {
+          toast.warning("Still using password authentication", {
+            description: error instanceof Error ? error.message : "The key could not be installed. The connection works, but the password remains stored.",
+          });
+        }
+      }
     } catch (error) {
       toast.error("Server was not saved", { description: error instanceof Error ? error.message : "The API could not persist this connection." });
     }
@@ -215,30 +248,42 @@ export function ServersPage() {
                 : <Input value={connection.secret} onChange={update("secret")} type="password" placeholder="••••••••••••" autoComplete="new-password" />}
             </Field>
             {connection.authenticationType === "privateKey" && <Field label="Key passphrase" hint="Optional"><Input value={connection.passphrase} onChange={update("passphrase")} type="password" autoComplete="off" /></Field>}
-            <Field label="Host key" hint="Orbit reads the key directly from your server. Compare it with the value your provider published, then confirm.">
-              {connection.hostFingerprint
-                ? <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/[0.04] p-3">
-                    <div className="flex items-start gap-2">
-                      <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
-                      <div className="min-w-0 flex-1">
-                        <p className="break-all font-mono text-[10px] text-zinc-200">{connection.hostFingerprint}</p>
-                        {discovered?.keyType && <p className="mt-1 text-[8px] uppercase tracking-wider text-zinc-600">{discovered.keyType} · retrieved from {connection.host}:{connection.port}</p>}
-                        <p className="mt-2 text-[9px] leading-4 text-zinc-500">Pinned once saved. If this server ever presents a different key, Orbit refuses the connection rather than trusting it.</p>
-                      </div>
-                      <button type="button" onClick={() => { setConnection((c) => ({ ...c, hostFingerprint: "" })); setDiscovered(undefined); }} className="text-[9px] text-zinc-500 hover:text-zinc-300">Change</button>
-                    </div>
+            {/* Retrieved automatically on reaching this step. The host was
+                already supplied, so making the user ask for it separately adds
+                a decision they have no basis to make. */}
+            <Field label="Host key">
+              {discovering
+                ? <div className="flex items-center gap-2.5 rounded-lg border border-border bg-black/15 p-3 text-[10px] text-zinc-400">
+                    <RefreshCw className="size-3.5 shrink-0 animate-spin text-zinc-500" />
+                    Reading the host key from {connection.host}…
                   </div>
-                : <div className="space-y-2">
-                    <Button type="button" variant="outline" className="w-full" disabled={discovering || !connection.host} onClick={() => void retrieveFingerprint()}>
-                      {discovering ? <><RefreshCw className="animate-spin" />Reading host key…</> : <><ShieldCheck />Retrieve host key from {connection.host || "server"}</>}
-                    </Button>
-                    {discoverError && <p className="rounded-md border border-red-400/15 bg-red-400/5 p-2.5 text-[9px] text-red-300">{discoverError}</p>}
-                    <details className="text-[9px] text-zinc-600">
-                      <summary className="cursor-pointer hover:text-zinc-400">Paste it manually instead</summary>
-                      <Input value={connection.hostFingerprint} onChange={update("hostFingerprint")} placeholder="SHA256:base64-fingerprint" spellCheck={false} className="mt-2 font-mono" />
-                      <p className="mt-1.5">Run <code className="text-zinc-500">ssh-keyscan -t ed25519 {connection.host || "host"} | ssh-keygen -lf -</code> on a machine you trust.</p>
-                    </details>
-                  </div>}
+                : connection.hostFingerprint
+                  ? <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/[0.04] p-3">
+                      <div className="flex items-start gap-2">
+                        <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
+                        <div className="min-w-0 flex-1">
+                          <p className="break-all font-mono text-[10px] text-zinc-200">{connection.hostFingerprint}</p>
+                          <p className="mt-1 text-[8px] uppercase tracking-wider text-zinc-600">
+                            {discovered ? `${discovered.keyType} · ${connection.host}:${connection.port}` : "entered manually"}
+                          </p>
+                          <p className="mt-2 text-[9px] leading-4 text-zinc-500">
+                            Pinned on save. If this server ever presents a different key, Orbit refuses the connection instead of trusting it.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  : <div className="space-y-2">
+                      {discoverError && <p className="rounded-md border border-amber-400/15 bg-amber-400/5 p-2.5 text-[9px] leading-4 text-amber-200">{discoverError}</p>}
+                      <div className="flex gap-2">
+                        <Button type="button" variant="outline" size="sm" disabled={!connection.host} onClick={() => void retrieveFingerprint()}>
+                          <RefreshCw />Try again
+                        </Button>
+                      </div>
+                      <Input value={connection.hostFingerprint} onChange={update("hostFingerprint")} placeholder="Or paste SHA256:… from your provider" spellCheck={false} className="font-mono" />
+                      <p className="text-[9px] leading-4 text-zinc-600">
+                        Get it with <code className="text-zinc-500">ssh-keyscan {connection.host || "host"} | ssh-keygen -lf -</code> on a machine that can reach this server.
+                      </p>
+                    </div>}
             </Field>
             <div className="rounded-lg border border-blue-400/15 bg-blue-400/[0.04] p-3"><div className="flex gap-3"><KeyRound className="mt-0.5 size-3.5 text-blue-300" /><div><p className="text-[10px] font-medium text-blue-200">Credentials stay server-side</p><p className="mt-1 text-[9px] leading-4 text-blue-200/55">Secrets are sent only to the authenticated API, encrypted before storage, and never returned to the browser or exposed in logs.</p></div></div></div>
           </div>

@@ -6,7 +6,8 @@ import { withAdapter } from "../adapters/index.js";
 import { discoverHostFingerprint } from "../adapters/host-key.js";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
-import { encryptJson } from "../lib/crypto.js";
+import { decryptJson, encryptJson } from "../lib/crypto.js";
+import { installOrbitKey } from "../services/key-provisioning.service.js";
 import { badRequest, conflict, notFound } from "../lib/errors.js";
 import { pagination, pageMeta } from "../lib/pagination.js";
 import { requireRole } from "../middleware/auth.js";
@@ -146,6 +147,68 @@ serversRouter.post(
         // rather than presenting first-contact discovery as verification.
         trustModel: "trust-on-first-use",
         advisory: "Compare this fingerprint with the value published by your host or provider. Once saved it is pinned, and any future change will block the connection.",
+      },
+    });
+  }),
+);
+
+/**
+ * Generates an Orbit-owned SSH key, installs it on the server, and switches the
+ * connection to key authentication.
+ *
+ * The stored password is only replaced once a fresh connection using the new
+ * key has succeeded, so a server that ignores authorized_keys leaves the
+ * working credential in place rather than locking the customer out.
+ */
+serversRouter.post(
+  "/:id/provision-key",
+  requireRole("admin"),
+  asyncHandler(async (request, response) => {
+    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "id"));
+    if (server.adapter_mode !== "sftp") {
+      throw badRequest("Key provisioning applies to real SFTP servers, not the demo adapter");
+    }
+    if (!server.host_fingerprint) {
+      throw badRequest("Retrieve and pin the host key before installing a key on this server");
+    }
+
+    const stored = server.credential_ciphertext
+      ? decryptJson<{ password?: string }>(server.credential_ciphertext)
+      : undefined;
+    const password = typeof request.body?.password === "string" && request.body.password.length > 0
+      ? request.body.password
+      : stored?.password;
+    if (!password) {
+      throw badRequest("A password is required once, to authorise installing the key");
+    }
+
+    const expected = /^sha256:/i.test(server.host_fingerprint.trim())
+      ? Buffer.from(server.host_fingerprint.trim().replace(/^sha256:/i, ""), "base64").toString("hex")
+      : server.host_fingerprint.trim().toLowerCase().replace(/:/g, "");
+
+    // Space-free so the removal grep during re-provisioning matches one whole
+    // field, and so the entry is unambiguous when read by a human.
+    const comment = `orbit-plus-${request.tenant!.organizationId.slice(0, 8)}-${server.id.slice(0, 8)}`;
+    const keyPair = await installOrbitKey(
+      { host: server.host, port: server.port, username: server.username, hostFingerprintSha256: expected },
+      password,
+      comment,
+    );
+
+    await pool.query(
+      `UPDATE server_connections
+          SET authentication_type = 'privateKey', credential_ciphertext = $3, updated_at = now()
+        WHERE id = $1 AND organization_id = $2`,
+      [server.id, request.tenant!.organizationId, encryptJson({ privateKey: keyPair.privateKey })],
+    );
+
+    response.json({
+      data: {
+        serverId: server.id,
+        authenticationType: "privateKey",
+        publicKey: keyPair.publicKey,
+        comment: keyPair.comment,
+        message: "An Orbit key was installed and verified. The password is no longer stored, and future connections use the key.",
       },
     });
   }),

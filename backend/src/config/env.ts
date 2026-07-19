@@ -12,6 +12,10 @@ const envSchema = z.object({
   ALLOW_DEVELOPMENT_SEED: z.string().default("false").transform((value) => value === "true"),
   SEED_DATABASE_NAME: z.string().min(1).optional(),
   SFTP_ALLOW_PRIVATE_NETWORKS: z.string().default("false").transform((value) => value === "true"),
+  // Local development and single-host self-hosting, where the SFTP server runs
+  // on the same machine as the API. Off by default: on a shared worker this
+  // would expose anything bound to loopback.
+  SFTP_ALLOW_LOOPBACK: z.string().default("false").transform((value) => value === "true"),
   MAX_FILE_BYTES: z.coerce.number().int().positive().default(2 * 1024 * 1024),
   // Uploads bypass the editor's version-history path, so they are allowed to be
   // considerably larger than a file the browser will render in an editor.
