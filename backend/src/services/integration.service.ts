@@ -16,6 +16,9 @@ export const INTEGRATION_EVENTS = [
   "alert.opened", "alert.resolved",
   "transfer.completed", "transfer.failed",
   "backup.completed", "backup.failed",
+  // A restore writes over live files, so both outcomes are worth routing
+  // somewhere a person will see them.
+  "backup.restored", "backup.restore_failed",
   "deployment.succeeded", "deployment.failed",
   "server.offline", "server.online",
 ] as const;

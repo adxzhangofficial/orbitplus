@@ -16,7 +16,7 @@ import {
 } from "../services/announcement.service.js";
 import { runAutomation, sweepDueAutomations } from "./automation.worker.js";
 import { runBackup, runRestore } from "./backup.worker.js";
-import { runRetentionSweep, runSessionPrune, runTokenPrune } from "./maintenance.worker.js";
+import { runBackupExpiry, runRetentionSweep, runSessionPrune, runTokenPrune } from "./maintenance.worker.js";
 import { runTransfer } from "./transfer.worker.js";
 import { runTreeIndex, type TreeIndexJob } from "./tree-index.worker.js";
 import { markStaleAgents, pruneOldMetrics, runHealthSweep } from "./health-sweep.worker.js";
@@ -67,7 +67,8 @@ export async function startWorkers(): Promise<void> {
 
   await boss.work(QUEUES.retention, { batchSize: WORKER_BATCH_SIZES[QUEUES.retention] }, async () => {
     const result = await runRetentionSweep();
-    console.info("Retention sweep complete", result);
+    const backups = await runBackupExpiry();
+    console.info("Retention sweep complete", { ...result, ...backups });
   });
 
   await boss.work(QUEUES.tokenPrune, { batchSize: WORKER_BATCH_SIZES[QUEUES.tokenPrune] }, async () => {

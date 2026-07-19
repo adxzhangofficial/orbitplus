@@ -56,6 +56,39 @@ export async function runBackup(job: BackupJob): Promise<void> {
 
 export async function runRestore(job: BackupJob & { storageKey: string }): Promise<void> {
   const server = await serverForTenant(job.organizationId, job.serverId);
-  await withAdapter(server, (adapter) => restoreSnapshot(job.storageKey, adapter));
-  await pool.query("UPDATE backups SET last_restored_at = now() WHERE id = $1", [job.backupId]);
+  try {
+    await withAdapter(server, (adapter) => restoreSnapshot(job.storageKey, adapter));
+    await pool.query(
+      "UPDATE backups SET status = 'completed', last_restored_at = now(), error_message = NULL WHERE id = $1",
+      [job.backupId],
+    );
+    await dispatchEvent({
+      event: "backup.restored",
+      organizationId: job.organizationId,
+      title: "Backup restored",
+      message: `A snapshot was restored to ${server.name}.`,
+      severity: "success",
+      resource: { type: "backup", id: job.backupId, name: server.name },
+      occurredAt: new Date().toISOString(),
+    }).catch(() => undefined);
+  } catch (error) {
+    // The snapshot itself is still intact, so the row goes back to completed
+    // rather than failed — otherwise a restore that could not connect would
+    // permanently mark a good backup as unusable, and the claim in the restore
+    // route would never let anyone try again.
+    await pool.query(
+      "UPDATE backups SET status = 'completed', error_message = $2 WHERE id = $1",
+      [job.backupId, error instanceof Error ? error.message.slice(0, 1000) : "Restore failed"],
+    );
+    await dispatchEvent({
+      event: "backup.restore_failed",
+      organizationId: job.organizationId,
+      title: "Restore failed",
+      message: error instanceof Error ? error.message.slice(0, 500) : "Restore failed",
+      severity: "critical",
+      resource: { type: "backup", id: job.backupId },
+      occurredAt: new Date().toISOString(),
+    }).catch(() => undefined);
+    throw error;
+  }
 }

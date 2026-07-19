@@ -29,6 +29,7 @@ let organizationId = "";
 let serverId = "";
 let workspaceId = "";
 let originalReadme = "";
+let userId = "";
 
 beforeAll(async () => {
   ({ app } = await import("../app.js"));
@@ -43,6 +44,7 @@ beforeAll(async () => {
   expect(login.status).toBe(200);
   token = login.body.data.token as string;
   organizationId = login.body.data.organizations[0].id as string;
+  userId = login.body.data.user.id as string;
 }, 60_000);
 
 afterAll(async () => {
@@ -158,20 +160,42 @@ describe("Orbit API", () => {
   });
 
   it("creates and restores a real filesystem snapshot", async () => {
+    // Both halves run on the queue, so the request only accepts the work and
+    // the worker is driven directly here. Asserting through the worker is what
+    // keeps this test honest about the path production actually takes.
+    const { runBackup, runRestore } = await import("../workers/backup.worker.js");
     const filePath = "/var/www/app/config/production.json";
     const before = await customer("get", `/api/v1/servers/${serverId}/files/content`).query({ path: filePath });
+
     const backup = await customer("post", "/api/v1/backups").send({ serverId, name: `API snapshot ${Date.now()}`, path: "/var/www/app/config", retentionDays: 7 });
-    expect(backup.status).toBe(201);
-    expect(backup.body.data.status).toBe("completed");
-    expect(backup.body.data.fileCount).toBeGreaterThan(0);
+    expect(backup.status).toBe(202);
+    expect(backup.body.data.status).toBe("queued");
+    const backupId = backup.body.data.id as string;
+
+    await runBackup({ backupId, organizationId, serverId, userId, rootPath: "/var/www/app/config" });
+
+    const stored = await customer("get", `/api/v1/backups/${backupId}`);
+    expect(stored.body.data.status).toBe("completed");
+    expect(stored.body.data.fileCount).toBeGreaterThan(0);
 
     const changed = await customer("put", `/api/v1/servers/${serverId}/files/content`).send({ path: filePath, content: "{\"maintenance\":true}\n", encoding: "utf8", expectedChecksum: before.body.data.checksum });
     expect(changed.status).toBe(200);
-    const restored = await customer("post", `/api/v1/backups/${backup.body.data.id}/restore`).send({});
-    expect(restored.status).toBe(200);
-    expect(restored.body.data.restoredFiles).toBeGreaterThan(0);
+
+    const restore = await customer("post", `/api/v1/backups/${backupId}/restore`).send({});
+    expect(restore.status).toBe(202);
+    expect(restore.body.data.status).toBe("restoring");
+
+    const key = await databasePool.query<{ storage_key: string }>("SELECT storage_key FROM backups WHERE id = $1", [backupId]);
+    await runRestore({ backupId, organizationId, serverId, userId, rootPath: "/", storageKey: key.rows[0]!.storage_key });
+
     const after = await customer("get", `/api/v1/servers/${serverId}/files/content`).query({ path: filePath });
     expect(after.body.data.content).toBe(before.body.data.content);
+
+    // The row must come back out of 'restoring', or the claim in the restore
+    // route would never let anyone restore this snapshot again.
+    const settled = await customer("get", `/api/v1/backups/${backupId}`);
+    expect(settled.body.data.status).toBe("completed");
+    expect(settled.body.data.lastRestoredAt).toBeTruthy();
   });
 
   it("deploys a versioned artifact and performs a filesystem rollback", async () => {

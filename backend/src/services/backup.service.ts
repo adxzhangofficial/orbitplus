@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import type { RemoteFilesystem } from "../adapters/remote-filesystem.js";
@@ -48,4 +48,24 @@ export async function restoreSnapshot(storageKey: string, adapter: RemoteFilesys
   }
   for (const file of snapshot.files) await adapter.write(file.path, Buffer.from(file.content, "base64"));
   return { restoredFiles: snapshot.files.length, rootPath: snapshot.rootPath };
+}
+
+/**
+ * Removes a snapshot's stored bytes.
+ *
+ * The traversal guard is repeated here rather than assumed: this deletes a
+ * file, and a storage key that escaped the backup root would delete something
+ * else entirely. A key that no longer resolves is not an error — the row is
+ * being expired, and a snapshot that has already gone is the desired end state.
+ */
+export async function deleteSnapshot(storageKey: string): Promise<boolean> {
+  const resolved = path.resolve(backupRoot, storageKey);
+  const relative = path.relative(backupRoot, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return false;
+  try {
+    await rm(resolved, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
