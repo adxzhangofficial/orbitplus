@@ -128,6 +128,38 @@ export const api = {
   put: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: "PUT", body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body) }),
   patch: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: "PATCH", body: body === undefined ? undefined : JSON.stringify(body) }),
   delete: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: "DELETE", body: body === undefined ? undefined : JSON.stringify(body) }),
+  /**
+   * Multipart upload. The content-type header is deliberately not set: the
+   * browser has to generate it so it carries the multipart boundary.
+   */
+  upload: <T>(path: string, body: FormData) => request<T>(path, { method: "POST", body }),
+
+  /**
+   * Streams a file to disk. This goes through fetch rather than a plain anchor
+   * because the endpoint needs the Authorization and organization headers,
+   * which a browser navigation cannot carry.
+   */
+  download: async (path: string, filename: string): Promise<void> => {
+    let response = await send(path, { method: "GET" }, getAccessToken());
+    if (response.status === 401) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) response = await send(path, { method: "GET" }, refreshed);
+    }
+    if (!response.ok) {
+      await parseResponse<unknown>(response);
+      throw new ApiError(`Download failed with status ${response.status}`, response.status);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    // Revoked on the next tick so the click has already been handled.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  },
   setAccessToken,
   clearSession,
   auth: {
