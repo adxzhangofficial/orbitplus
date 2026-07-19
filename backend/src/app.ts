@@ -23,6 +23,7 @@ import { overviewRouter } from "./routes/overview.routes.js";
 import { plansRouter } from "./routes/plans.routes.js";
 import { serversRouter } from "./routes/servers.routes.js";
 import { teamRouter } from "./routes/team.routes.js";
+import { terminalRouter } from "./routes/terminal.routes.js";
 import { transfersRouter } from "./routes/transfers.routes.js";
 import { webhooksRouter } from "./routes/webhooks.routes.js";
 import { workspacesRouter } from "./routes/workspaces.routes.js";
@@ -74,6 +75,7 @@ export function createApp() {
   customer.use("/notifications", notificationsRouter);
   customer.use("/team", teamRouter);
   customer.use("/billing", billingRouter);
+  customer.use("/terminal", terminalRouter);
   const admin = Router();
   admin.use(authenticate, requirePlatformAdmin);
   admin.use(adminRouter);

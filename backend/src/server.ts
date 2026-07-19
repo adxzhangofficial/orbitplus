@@ -3,8 +3,13 @@ import { app } from "./app.js";
 import { env } from "./config/env.js";
 import { closePool, pool } from "./database/pool.js";
 import { assertSchemaReady } from "./database/schema.js";
+import { attachTerminalServer } from "./services/terminal.service.js";
 
 const server = createServer(app);
+
+// Shares the API's port and origin, so no additional listener or CORS surface
+// is introduced for the terminal.
+attachTerminalServer(server);
 
 async function start(): Promise<void> {
   try {
