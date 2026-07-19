@@ -22,7 +22,7 @@ function toDeployment(item: BackendDeployment): DeploymentRow {
 }
 
 export function DeploymentsPage() {
-  const deployments = useLiveResource([] as DeploymentRow[], async () => (await api.get<BackendDeployment[]>("/deployments?limit=100")).map(toDeployment));
+  const deployments = useLiveResource([] as DeploymentRow[], async () => (await api.get<BackendDeployment[]>("/deployments?limit=100")).map(toDeployment), 15000);
   const servers = useLiveResource([] as ServerOption[], () => api.get<ServerOption[]>("/servers?limit=100"));
   const { data: items, setData: setItems, live } = deployments;
   const [query, setQuery] = useState("");

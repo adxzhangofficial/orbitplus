@@ -13,6 +13,8 @@ import { env } from "../config/env.js";
 export const QUEUES = {
   transfer: "transfer.execute",
   treeIndex: "files.index-tree",
+  healthSweep: "monitoring.health-sweep",
+  agentInstall: "servers.install-agent",
   backup: "backup.run",
   backupRestore: "backup.restore",
   automation: "automation.run",

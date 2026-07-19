@@ -15,7 +15,7 @@ function toNotification(item: BackendNotification): Notification {
 }
 
 export function NotificationsPage() {
-  const resource = useLiveResource([] as Notification[], async () => (await api.get<BackendNotification[]>("/notifications")).map(toNotification));
+  const resource = useLiveResource([] as Notification[], async () => (await api.get<BackendNotification[]>("/notifications")).map(toNotification), 30000);
   const { data: items, setData: setItems, live } = resource;
   const [filter, setFilter] = useState<"all" | "unread">("all");
   const [preferences, setPreferences] = useState({ deployments: true, backups: true, security: true, monitoring: true, digest: false });

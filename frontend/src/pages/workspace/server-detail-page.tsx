@@ -71,8 +71,53 @@ export function ServerDetailPage() {
   return <ServerDetail server={server} />;
 }
 
+interface LiveMetrics {
+  cpu: number | null; memory: number | null; disk: number | null; latency: number | null;
+  status: string | null; sampledAt: string | null; source: string | null; transfers: number;
+}
+
+/** Renders an unmeasured value as a dash rather than as zero. */
+function pct(value: number | null): string {
+  return value === null ? "—" : `${Math.round(value)}%`;
+}
+
 function ServerDetail({ server }: { server: Server }) {
   const [connected, setConnected] = useState(server.status !== "offline");
+  const [live, setLive] = useState<LiveMetrics>({
+    cpu: null, memory: null, disk: null, latency: null,
+    status: null, sampledAt: null, source: null, transfers: 0,
+  });
+
+  /**
+   * Polls while the page is open so the readings track the background health
+   * sweep instead of freezing at whatever was loaded on mount.
+   */
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const [monitoring, transfers] = await Promise.all([
+          api.get<{ servers: Array<{ serverId: string; status?: string; cpuPercent?: number | null; memoryPercent?: number | null; diskPercent?: number | null; latencyMs?: number | null; sampledAt?: string; metricsSource?: string }> }>("/monitoring"),
+          api.get<Array<{ serverId: string }>>("/transfers?limit=100").catch(() => []),
+        ]);
+        if (!active) return;
+        const row = monitoring.servers.find((entry) => entry.serverId === server.id);
+        setLive({
+          cpu: row?.cpuPercent == null ? null : Number(row.cpuPercent),
+          memory: row?.memoryPercent == null ? null : Number(row.memoryPercent),
+          disk: row?.diskPercent == null ? null : Number(row.diskPercent),
+          latency: row?.latencyMs == null ? null : Number(row.latencyMs),
+          status: row?.status ?? null,
+          sampledAt: row?.sampledAt ?? null,
+          source: row?.metricsSource ?? null,
+          transfers: transfers.filter((item) => item.serverId === server.id).length,
+        });
+      } catch { /* a failed poll leaves the previous reading on screen */ }
+    };
+    void load();
+    const timer = setInterval(load, 15_000);
+    return () => { active = false; clearInterval(timer); };
+  }, [server.id]);
   // Real filenames from the indexed tree. This panel previously listed four
   // invented names that were identical for every server anyone opened.
   const [recentFiles, setRecentFiles] = useState<string[]>([]);
@@ -103,12 +148,16 @@ function ServerDetail({ server }: { server: Server }) {
       <header className="border-b border-border"><div className="mx-auto max-w-[1500px] px-4 pb-0 pt-5 sm:px-6 md:px-8"><div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center"><div className="flex min-w-0 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-card text-muted-foreground"><ServerIcon className="size-4.5" /></span><div className="min-w-0"><div className="flex items-center gap-2"><h1 className="truncate text-xl font-semibold">{server.name}</h1><StatusBadge status={connected ? server.status : "offline"} /></div><p className="mt-1 truncate font-mono text-[9px] text-muted-foreground">{server.username}@{server.host}:{server.port} · {server.rootPath}</p></div></div><div className="flex flex-wrap gap-2 lg:ml-auto"><Button variant="ghost" size="icon" onClick={() => setStarred((value) => !value)} title="Favorite"><Star className={starred ? "fill-amber-300 text-amber-300" : ""} /></Button><Button variant="outline" onClick={() => void navigator.clipboard.writeText(server.host).then(() => toast.success("Hostname copied"))}><Copy />Copy host</Button><Link to={`/workspace/terminal?server=${server.id}`}><Button variant="outline"><Terminal />Terminal</Button></Link><Button variant={connected ? "danger" : "primary"} onClick={() => { setConnected((value) => !value); toast.success(connected ? "Server disconnected" : "Connection established"); }}>{connected ? <><Unplug />Disconnect</> : <><Zap />Connect</>}</Button><Button variant="ghost" size="icon"><MoreHorizontal /></Button></div></div><nav className="flex min-w-0 gap-1 overflow-x-auto" aria-label="Server sections">{tabs.map((tab) => <NavLink key={tab.label} to={tab.to} end={tab.end} className={({ isActive }) => cn("relative flex h-9 shrink-0 items-center px-3 text-[10px] text-muted-foreground hover:text-foreground", isActive && "text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-px after:bg-white")}>{tab.label}</NavLink>)}</nav></div></header>
       <div className="mx-auto max-w-[1500px] space-y-8 px-4 py-5 sm:px-6 md:px-8 md:py-7">
         <section className="grid grid-cols-2 border-y border-border lg:grid-cols-6">{[
-          { label: "CPU", value: `${connected ? server.cpu : 0}%`, icon: Activity, detail: "4 vCPU" },
-          { label: "Memory", value: `${connected ? server.memory : 0}%`, icon: Gauge, detail: "5.1 / 8 GB" },
-          { label: "Disk", value: `${server.disk}%`, icon: Database, detail: "94 / 200 GB" },
-          { label: "Latency", value: connected ? `${server.latency} ms` : "—", icon: Zap, detail: server.region.split(" · ")[0] },
-          { label: "Uptime", value: connected ? server.uptime : "—", icon: CircleCheck, detail: "last 30 days" },
-          { label: "Transfers", value: "1", icon: CloudUpload, detail: "18.4 MB/s" },
+          // Values come from the latest sample. An unmeasured resource shows a
+          // dash, never 0%, and the caption says why rather than inventing
+          // hardware specs: "4 vCPU", "5.1 / 8 GB", and "94 / 200 GB" were
+          // fixed strings shown for every server regardless of its actual size.
+          { label: "CPU", value: pct(live.cpu), icon: Activity, detail: live.source ?? "collecting" },
+          { label: "Memory", value: pct(live.memory), icon: Gauge, detail: live.source ?? "collecting" },
+          { label: "Disk", value: pct(live.disk), icon: Database, detail: live.source ?? "collecting" },
+          { label: "Latency", value: live.latency === null ? "—" : `${live.latency} ms`, icon: Zap, detail: live.sampledAt ? relativeTime(live.sampledAt) : "not probed" },
+          { label: "Status", value: live.status ?? server.status, icon: CircleCheck, detail: live.sampledAt ? "last check" : "no checks yet" },
+          { label: "Transfers", value: String(live.transfers), icon: CloudUpload, detail: "last 30 days" },
         ].map((item, index) => <div key={item.label} className={cn("flex items-center gap-3 p-3.5", index % 2 === 0 && "border-r", index < 4 && "border-b lg:border-b-0", index < 5 && "lg:border-r")}><span className="grid size-8 place-items-center rounded-md bg-muted text-muted-foreground"><item.icon className="size-3.5" /></span><span className="min-w-0"><strong className="block text-lg tabular-nums">{item.value}</strong><span className="block truncate text-[8px] text-muted-foreground">{item.label} · {item.detail}</span></span></div>)}</section>
 
         <section className="grid gap-8 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,.7fr)]"><div><div className="mb-3 flex items-end justify-between"><div><h2 className="text-sm font-semibold">Resource load</h2><p className="mt-1 text-[10px] text-muted-foreground">CPU, memory, and network · last 24 hours</p></div><div className="flex items-center gap-3 text-[8px] text-zinc-600"><span><i className="mr-1.5 inline-block size-1.5 rounded-full bg-blue-400" />CPU</span><span><i className="mr-1.5 inline-block size-1.5 rounded-full bg-violet-400" />Memory</span></div></div><div className="h-72 rounded-lg border border-border bg-card p-4"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData}><defs><linearGradient id="serverCpu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#6b82ff" stopOpacity={0.22} /><stop offset="1" stopColor="#6b82ff" stopOpacity={0} /></linearGradient><linearGradient id="serverMem" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#a78bfa" stopOpacity={0.16} /><stop offset="1" stopColor="#a78bfa" stopOpacity={0} /></linearGradient></defs><XAxis dataKey="time" tick={{ fill: "#52525b", fontSize: 8 }} axisLine={false} tickLine={false} interval={3} /><Tooltip contentStyle={{ background: "#171717", border: "1px solid rgba(255,255,255,.1)", borderRadius: 8, fontSize: 9 }} /><Area type="monotone" dataKey="memory" stroke="#a78bfa" strokeWidth={1.2} fill="url(#serverMem)" /><Area type="monotone" dataKey="cpu" stroke="#6b82ff" strokeWidth={1.5} fill="url(#serverCpu)" /></AreaChart></ResponsiveContainer></div></div>

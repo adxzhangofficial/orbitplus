@@ -13,6 +13,8 @@ import { runBackup, runRestore } from "./backup.worker.js";
 import { runRetentionSweep, runSessionPrune, runTokenPrune } from "./maintenance.worker.js";
 import { runTransfer } from "./transfer.worker.js";
 import { runTreeIndex, type TreeIndexJob } from "./tree-index.worker.js";
+import { markStaleAgents, pruneOldMetrics, runHealthSweep } from "./health-sweep.worker.js";
+import { runAgentInstall, type AgentInstallJob } from "./agent-install.worker.js";
 
 /**
  * pg-boss delivers a batch, and one poisoned job must not fail its neighbours.
@@ -46,15 +48,27 @@ export async function startWorkers(): Promise<void> {
   // large result, so running several concurrently would spike memory.
   await boss.work<TreeIndexJob>(QUEUES.treeIndex, { batchSize: 1 }, batched(runTreeIndex));
 
+  // Installs run one at a time: each holds an SSH session for tens of seconds.
+  await boss.work<AgentInstallJob>(QUEUES.agentInstall, { batchSize: 1 }, batched(runAgentInstall));
+
+  // Every 30 seconds, so latency and status stay current without anyone
+  // pressing a button. Skips servers whose breaker is open.
+  await boss.work(QUEUES.healthSweep, { batchSize: 1 }, async () => {
+    const result = await runHealthSweep();
+    const stale = await markStaleAgents();
+    if (result.probed || result.failed) console.info("Health sweep complete", { ...result, staleAgents: stale });
+  });
+
   await boss.work(QUEUES.retention, { batchSize: 1 }, async () => {
     const result = await runRetentionSweep();
     console.info("Retention sweep complete", result);
   });
 
   await boss.work(QUEUES.tokenPrune, { batchSize: 1 }, async () => {
+    const metrics = await pruneOldMetrics();
     const tokens = await runTokenPrune();
     const sessions = await runSessionPrune();
-    console.info("Credential prune complete", { tokens, sessions });
+    console.info("Credential prune complete", { tokens, sessions, metrics });
   });
 
   await boss.work(QUEUES.monitorSweep, { batchSize: 1 }, async () => {
@@ -65,6 +79,7 @@ export async function startWorkers(): Promise<void> {
   // Recurring schedules. pg-boss stores these, so re-registering on every boot
   // updates rather than duplicates them.
   await boss.schedule(QUEUES.monitorSweep, "* * * * *", {});
+  await boss.schedule(QUEUES.healthSweep, "* * * * *", {});
   await boss.schedule(QUEUES.retention, "30 3 * * *", {});
   await boss.schedule(QUEUES.tokenPrune, "0 4 * * *", {});
 

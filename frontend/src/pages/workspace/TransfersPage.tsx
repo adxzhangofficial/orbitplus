@@ -16,7 +16,7 @@ function toTransfer(item: BackendTransfer): Transfer {
 }
 
 export function TransfersPage() {
-  const transfers = useLiveResource([] as Transfer[], async () => (await api.get<BackendTransfer[]>("/transfers?limit=100")).map(toTransfer));
+  const transfers = useLiveResource([] as Transfer[], async () => (await api.get<BackendTransfer[]>("/transfers?limit=100")).map(toTransfer), 10000);
   const servers = useLiveResource([] as ServerOption[], () => api.get<ServerOption[]>("/servers?limit=100"));
   const { data: items, setData: setItems, live } = transfers;
   const [query, setQuery] = useState("");

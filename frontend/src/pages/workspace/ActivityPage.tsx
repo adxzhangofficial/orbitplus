@@ -19,7 +19,7 @@ function toActivity(item: BackendActivity): ActivityEvent {
 }
 
 export function ActivityPage() {
-  const resourceState = useLiveResource([] as ActivityEvent[], async () => (await api.get<BackendActivity[]>("/activity?limit=100")).map(toActivity));
+  const resourceState = useLiveResource([] as ActivityEvent[], async () => (await api.get<BackendActivity[]>("/activity?limit=100")).map(toActivity), 20000);
   const { data: events, live } = resourceState;
   const [query, setQuery] = useState("");
   const [severity, setSeverity] = useState("all");

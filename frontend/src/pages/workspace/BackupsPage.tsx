@@ -21,7 +21,7 @@ function toBackup(item: BackendBackup): Backup {
 }
 
 export function BackupsPage() {
-  const backups = useLiveResource([] as Backup[], async () => (await api.get<BackendBackup[]>("/backups?limit=100")).map(toBackup));
+  const backups = useLiveResource([] as Backup[], async () => (await api.get<BackendBackup[]>("/backups?limit=100")).map(toBackup), 15000);
   const servers = useLiveResource([] as ServerOption[], () => api.get<ServerOption[]>("/servers?limit=100"));
   const { data: items, setData: setItems, live } = backups;
   const [previewRows, setPreviewRows] = useState(previewSchedules);

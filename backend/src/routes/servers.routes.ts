@@ -8,6 +8,7 @@ import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { decryptJson, encryptJson } from "../lib/crypto.js";
 import { generateToken, hashToken } from "../lib/tokens.js";
+import { enqueue, QUEUES } from "../queue/index.js";
 import { installOrbitKey } from "../services/key-provisioning.service.js";
 import { badRequest, conflict, notFound } from "../lib/errors.js";
 import { pagination, pageMeta } from "../lib/pagination.js";
@@ -340,6 +341,23 @@ serversRouter.post(
       `SELECT ${publicServerColumns} FROM server_connections s JOIN workspaces w ON w.id = s.workspace_id WHERE s.id = $1 AND s.organization_id = $2`,
       [result.rows[0].id, request.tenant!.organizationId],
     );
+
+    // Installing the agent is part of connecting a server, not a later opt-in.
+    // Queued rather than run inline because it takes tens of seconds and must
+    // not hold the HTTP response open, and because a failure to install must
+    // not fail the connection: everything except resource metrics works
+    // without it.
+    await enqueue(QUEUES.agentInstall, {
+      serverId: result.rows[0].id,
+      organizationId: request.tenant!.organizationId,
+    }).catch(() => undefined);
+    // The tree is indexed at the same time so the file explorer is populated
+    // before the user opens it.
+    await enqueue(QUEUES.treeIndex, {
+      serverId: result.rows[0].id,
+      organizationId: request.tenant!.organizationId,
+    }).catch(() => undefined);
+
     response.status(201).json({ data: created.rows[0] });
   }),
 );
