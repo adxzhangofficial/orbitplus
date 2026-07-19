@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { AnnouncementBanner } from "@/components/announcement-banner";
 import { Brand } from "@/components/brand";
 import { CommandPalette } from "@/components/command-palette";
 import { Avatar, Badge, IconButton, Kbd } from "@/components/ui";
@@ -172,7 +173,7 @@ export function WorkspaceShell() {
       <div className="fixed inset-y-0 left-0 z-40 hidden md:block">{sidebar}</div>
       {mobileOpen && <button type="button" className="fixed inset-x-0 bottom-0 top-14 z-30 bg-black/65 md:hidden" onClick={() => setMobileOpen(false)} aria-label="Close navigation overlay" />}
       <div className={cn("fixed bottom-0 left-0 top-14 z-40 transition-transform md:hidden", mobileOpen ? "translate-x-0" : "-translate-x-full")}>{sidebar}</div>
-      <main className="min-h-screen pt-14 md:pl-56 md:pt-0"><Outlet /></main>
+      <main className="min-h-screen pt-14 md:pl-56 md:pt-0"><AnnouncementBanner /><Outlet /></main>
       <CommandPalette open={commandOpen} onClose={() => setCommandOpen(false)} />
       <button type="button" title="Midnight theme active" aria-label="Midnight theme active" className="fixed bottom-4 right-4 z-20 hidden size-8 place-items-center rounded-full border border-border bg-card text-zinc-600 shadow-lg lg:grid"><MoonStar className="size-3.5" /></button>
     </div>

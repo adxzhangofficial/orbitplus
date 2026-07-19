@@ -19,6 +19,20 @@ interface Message {
   footer?: string;
 }
 
+/**
+ * The transactional messages below compose their own fixed copy, so nothing
+ * needs escaping. Announcements carry operator-authored text into the same
+ * template, and an operator is not a reason to ship unescaped markup into
+ * someone's mail client.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function render({ heading, body, actionLabel, actionUrl, footer }: Message): string {
   const button = actionLabel && actionUrl
     ? `<p style="margin:32px 0"><a href="${actionUrl}" style="background:#18181b;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;font-size:14px;display:inline-block">${actionLabel}</a></p>
@@ -104,5 +118,38 @@ export async function sendPasswordChangedEmail(to: string): Promise<void> {
     heading: "Your password was changed",
     body: "The password for your account was just changed and all other active sessions were signed out.",
     footer: "If this was not you, reset your password immediately and review your active sessions.",
+  });
+}
+
+/**
+ * A published announcement, by email.
+ *
+ * Unlike the transactional messages above, this one lets delivery failure
+ * propagate. A bounce here is not a security signal to be swallowed; it is an
+ * outcome the operator needs recorded against the recipient, so the caller
+ * catches it and writes it down.
+ */
+export async function sendAnnouncementEmail(input: {
+  to: string;
+  title: string;
+  body: string;
+  actionLabel?: string | null;
+  actionUrl?: string | null;
+}): Promise<void> {
+  await deliver({
+    to: input.to,
+    // The subject is a header, not markup, so it carries the raw title.
+    subject: input.title,
+    heading: escapeHtml(input.title),
+    body: escapeHtml(input.body).replace(/\n/g, "<br>"),
+    ...(input.actionLabel && input.actionUrl
+      ? {
+          actionLabel: escapeHtml(input.actionLabel),
+          // Inside an href, so quotes are what would break out of the
+          // attribute. encodeURI leaves an already-valid URL intact.
+          actionUrl: encodeURI(input.actionUrl),
+        }
+      : {}),
+    footer: `You are receiving this because you have an Orbit+ account. <a href="${appUrl}/workspace/settings/profile">Manage announcement email</a>.`,
   });
 }

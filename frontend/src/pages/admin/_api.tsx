@@ -216,6 +216,42 @@ export interface AdminQueueLatency {
   p95Seconds: number;
 }
 
+export type AnnouncementAudience = "all" | "free" | "pro" | "enterprise" | "paid";
+
+export interface AdminAnnouncement {
+  id: string;
+  title: string;
+  body: string;
+  audience: AnnouncementAudience;
+  sendEmail: boolean;
+  status: "draft" | "scheduled" | "published" | "archived";
+  actionLabel: string | null;
+  actionUrl: string | null;
+  publishAt: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  authorName: string | null;
+  views: number;
+  clicks: number;
+  emailsSent: number;
+  emailsFailed: number;
+}
+
+export interface AnnouncementReach {
+  inApp: number;
+  email: number;
+  optedOut: number;
+}
+
+export interface AnnouncementDelivery extends AnnouncementReach {
+  views: number;
+  clicks: number;
+  emailsSent: number;
+  emailsFailed: number;
+  failures: Array<{ email: string; error: string | null; createdAt: string }>;
+}
+
 export interface PlatformAuditEntry {
   id: number;
   actorEmail: string;
@@ -265,6 +301,21 @@ export const adminApi = {
   queueLatency: () => api.get<AdminQueueLatency[]>("/admin/jobs/latency"),
   retryJob: (id: string) => api.post<{ id: string; queue: string }>(`/admin/jobs/${encodeURIComponent(id)}/retry`, {}),
   cancelJob: (id: string) => api.post(`/admin/jobs/${encodeURIComponent(id)}/cancel`, {}),
+  announcements: () => api.get<AdminAnnouncement[]>("/admin/announcements"),
+  announcementReach: (audience: AnnouncementAudience) =>
+    api.get<AnnouncementReach>(`/admin/announcements/reach?audience=${audience}`),
+  announcementDelivery: (id: string) =>
+    api.get<AnnouncementDelivery>(`/admin/announcements/${encodeURIComponent(id)}/delivery`),
+  createAnnouncement: (input: {
+    title: string; body: string; audience: AnnouncementAudience; sendEmail: boolean;
+    actionLabel?: string | null; actionUrl?: string | null; publishAt?: string | null;
+  }) => api.post<{ id: string; status: string }>("/admin/announcements", input),
+  publishAnnouncement: (id: string) =>
+    api.post<{ published: boolean; emailQueued: boolean }>(`/admin/announcements/${encodeURIComponent(id)}/publish`, {}),
+  unpublishAnnouncement: (id: string) =>
+    api.post<{ withdrawn: boolean; emailsAlreadySent: number }>(`/admin/announcements/${encodeURIComponent(id)}/unpublish`, {}),
+  deleteAnnouncement: (id: string) => api.delete(`/admin/announcements/${encodeURIComponent(id)}`),
+
   intake: () => api.get<{ paused: boolean; held: number }>("/admin/jobs/intake"),
   setIntake: (paused: boolean) => api.post<{ paused: boolean; released: number }>("/admin/jobs/intake", { paused }),
   platformAudit: (action?: string) => api.get<PlatformAuditEntry[]>(`/admin/platform-audit${action ? `?action=${action}` : ""}`),

@@ -23,11 +23,15 @@ const profileSchema = z.object({
   locale: z.string().trim().max(16).optional(),
   dateFormat: z.string().trim().max(32).optional(),
   preferences: z.record(z.string(), z.union([z.boolean(), z.string(), z.number()])).optional(),
+  // Covers announcement email only. Password resets and security notices are
+  // transactional and are never suppressed by a marketing preference.
+  announcementEmailOptOut: z.boolean().optional(),
 }).strict();
 
 const SELECT = `id, name, email, job_title AS "jobTitle", timezone, locale,
   date_format AS "dateFormat", preferences, email_verified AS "emailVerified",
   mfa_enabled AS "mfaEnabled", platform_role AS "platformRole",
+  announcement_email_opt_out AS "announcementEmailOptOut",
   last_login_at AS "lastLoginAt", created_at AS "createdAt"`;
 
 export const profileRouter = Router();
@@ -69,6 +73,7 @@ profileRouter.patch(
          locale = COALESCE($8, locale),
          date_format = COALESCE($9, date_format),
          preferences = COALESCE($10::jsonb, preferences),
+         announcement_email_opt_out = COALESCE($11, announcement_email_opt_out),
          updated_at = now()
        WHERE id = $1
        RETURNING ${SELECT}`,
@@ -83,6 +88,7 @@ profileRouter.patch(
         input.locale ?? null,
         input.dateFormat ?? null,
         input.preferences ? JSON.stringify(input.preferences) : null,
+        input.announcementEmailOptOut ?? null,
       ],
     );
     if (!result.rows[0]) throw notFound("User");

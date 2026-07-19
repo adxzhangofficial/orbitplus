@@ -8,7 +8,9 @@ import { fileURLToPath } from "node:url";
 import { env } from "./config/env.js";
 import { activityRouter } from "./routes/activity.routes.js";
 import { adminActionsRouter } from "./routes/admin-actions.routes.js";
+import { adminAnnouncementsRouter } from "./routes/admin-announcements.routes.js";
 import { adminRouter } from "./routes/admin.routes.js";
+import { announcementsRouter } from "./routes/announcements.routes.js";
 import { agentRouter } from "./routes/agent.routes.js";
 import { apiKeysRouter } from "./routes/api-keys.routes.js";
 import { authRouter } from "./routes/auth.routes.js";
@@ -69,6 +71,9 @@ export function createApp() {
   const account = Router();
   account.use(authenticate);
   account.use("/profile", profileRouter);
+  // Announcements follow the person, not the workspace: someone in two
+  // organizations sees one copy, so this must not go through tenant resolution.
+  account.use(announcementsRouter);
   api.use(account);
 
   const customer = Router();
@@ -95,6 +100,7 @@ export function createApp() {
   admin.use(authenticate, requirePlatformAdmin);
   admin.use(adminRouter);
   admin.use(adminActionsRouter);
+  admin.use(adminAnnouncementsRouter);
   // Mount platform routes before the catch-all customer router so an admin is
   // never forced through tenant resolution just to operate the control plane.
   api.use("/admin", admin);

@@ -24,6 +24,7 @@ interface Profile {
   preferences: Record<string, boolean | string | number>;
   emailVerified: boolean;
   mfaEnabled: boolean;
+  announcementEmailOptOut: boolean;
 }
 
 const TIMEZONES = ["UTC", "Asia/Shanghai", "Asia/Karachi", "Europe/London", "America/New_York", "America/Los_Angeles"];
@@ -66,6 +67,7 @@ export function ProfileSettingsPage() {
           locale: profile.locale,
           dateFormat: profile.dateFormat,
           preferences: profile.preferences,
+          announcementEmailOptOut: profile.announcementEmailOptOut,
         }),
         headers: { "content-type": "application/json" },
       });
@@ -187,6 +189,20 @@ export function ProfileSettingsPage() {
               onChange={(checked) => set("preferences", { ...profile.preferences, [item.key]: checked })}
             />
           </div>)}
+          <div className="flex items-center justify-between gap-3 py-3">
+            <div>
+              <p className="text-xs font-medium text-zinc-300">Product announcement email</p>
+              <p className="mt-1 text-[10px] text-zinc-600">
+                Turning this off stops product announcements only. Password resets and security
+                notices are always sent.
+              </p>
+            </div>
+            <Toggle
+              label="Product announcement email"
+              checked={!profile.announcementEmailOptOut}
+              onChange={(checked) => set("announcementEmailOptOut", !checked)}
+            />
+          </div>
         </div>
       </Panel>
     </div>

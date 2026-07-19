@@ -9,6 +9,11 @@ import {
   type BackupJob,
   type TransferJob,
 } from "../queue/index.js";
+import {
+  announcementWantsEmail,
+  deliverEmails as deliverAnnouncementEmails,
+  publishDueAnnouncements,
+} from "../services/announcement.service.js";
 import { runAutomation, sweepDueAutomations } from "./automation.worker.js";
 import { runBackup, runRestore } from "./backup.worker.js";
 import { runRetentionSweep, runSessionPrune, runTokenPrune } from "./maintenance.worker.js";
@@ -75,6 +80,21 @@ export async function startWorkers(): Promise<void> {
   await boss.work(QUEUES.monitorSweep, { batchSize: WORKER_BATCH_SIZES[QUEUES.monitorSweep] }, async () => {
     const enqueued = await sweepDueAutomations();
     if (enqueued > 0) console.info("Scheduled automations enqueued", { enqueued });
+
+    // Scheduled announcements go out here. The status update inside is
+    // conditional on the row still being scheduled, so two workers running
+    // this sweep at once cannot both publish, and therefore cannot both send
+    // the same broadcast twice.
+    const published = await publishDueAnnouncements();
+    for (const id of published) {
+      const shouldEmail = await announcementWantsEmail(id);
+      if (shouldEmail) {
+        void deliverAnnouncementEmails(id).catch((error: unknown) => {
+          console.error("Scheduled announcement email failed", { id, error });
+        });
+      }
+    }
+    if (published.length > 0) console.info("Scheduled announcements published", { count: published.length });
   });
 
   // Recurring schedules. pg-boss stores these, so re-registering on every boot
