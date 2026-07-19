@@ -1,5 +1,6 @@
 import { PgBoss } from "pg-boss";
 import { env } from "../config/env.js";
+import { heldStartAfter, HELD_MARKER, isIntakePaused } from "./intake.js";
 
 /**
  * Durable job queue backed by the application's own PostgreSQL instance.
@@ -24,6 +25,32 @@ export const QUEUES = {
 } as const;
 
 export type QueueName = typeof QUEUES[keyof typeof QUEUES];
+
+/**
+ * How many jobs one worker process takes from each queue at a time.
+ *
+ * This is the single definition: startWorkers registers with these, and the
+ * admin console reports capacity from them. Keeping the console reading the
+ * same constant means it cannot drift into describing a concurrency the
+ * workers are not running.
+ */
+export const WORKER_BATCH_SIZES: Record<QueueName, number> = {
+  // Transfers and backups touch remote servers, so concurrency is deliberately
+  // low: the limit that matters is the remote host's, not this process's.
+  [QUEUES.transfer]: 5,
+  [QUEUES.backup]: 2,
+  [QUEUES.backupRestore]: 2,
+  [QUEUES.automation]: 5,
+  // One at a time: a tree walk holds a connection and produces a large result,
+  // so running several concurrently would spike memory.
+  [QUEUES.treeIndex]: 1,
+  // Installs hold an SSH session for tens of seconds.
+  [QUEUES.agentInstall]: 1,
+  [QUEUES.healthSweep]: 1,
+  [QUEUES.retention]: 1,
+  [QUEUES.tokenPrune]: 1,
+  [QUEUES.monitorSweep]: 1,
+};
 
 export interface TransferJob {
   transferId: string;
@@ -92,9 +119,17 @@ export async function enqueue<T extends object>(
   options: { singletonKey?: string; startAfter?: Date } = {},
 ): Promise<string | null> {
   const instance = await getBoss();
-  return instance.send(queue, data, {
+
+  // When intake is paused the job is still accepted and still gets an id, so
+  // the caller's request succeeds and the work is not lost. It simply does not
+  // start until an operator resumes.
+  const paused = await isIntakePaused();
+  const payload = paused ? { ...data, [HELD_MARKER]: true } : data;
+  const startAfter = paused ? heldStartAfter() : options.startAfter;
+
+  return instance.send(queue, payload, {
     ...(options.singletonKey ? { singletonKey: options.singletonKey } : {}),
-    ...(options.startAfter ? { startAfter: options.startAfter } : {}),
+    ...(startAfter ? { startAfter } : {}),
   });
 }
 

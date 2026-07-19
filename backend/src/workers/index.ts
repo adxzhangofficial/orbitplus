@@ -4,6 +4,7 @@ import {
   getBoss,
   QUEUES,
   stopBoss,
+  WORKER_BATCH_SIZES,
   type AutomationJob,
   type BackupJob,
   type TransferJob,
@@ -40,38 +41,38 @@ export async function startWorkers(): Promise<void> {
 
   // Transfers and backups touch remote servers, so concurrency is deliberately
   // low: the limit that matters is the remote host's, not this process's.
-  await boss.work<TransferJob>(QUEUES.transfer, { batchSize: 5 }, batched(runTransfer));
-  await boss.work<BackupJob>(QUEUES.backup, { batchSize: 2 }, batched(runBackup));
-  await boss.work<BackupJob & { storageKey: string }>(QUEUES.backupRestore, { batchSize: 2 }, batched(runRestore));
-  await boss.work<AutomationJob>(QUEUES.automation, { batchSize: 5 }, batched(runAutomation));
+  await boss.work<TransferJob>(QUEUES.transfer, { batchSize: WORKER_BATCH_SIZES[QUEUES.transfer] }, batched(runTransfer));
+  await boss.work<BackupJob>(QUEUES.backup, { batchSize: WORKER_BATCH_SIZES[QUEUES.backup] }, batched(runBackup));
+  await boss.work<BackupJob & { storageKey: string }>(QUEUES.backupRestore, { batchSize: WORKER_BATCH_SIZES[QUEUES.backupRestore] }, batched(runRestore));
+  await boss.work<AutomationJob>(QUEUES.automation, { batchSize: WORKER_BATCH_SIZES[QUEUES.automation] }, batched(runAutomation));
   // One at a time per worker: a tree walk holds a connection and produces a
   // large result, so running several concurrently would spike memory.
-  await boss.work<TreeIndexJob>(QUEUES.treeIndex, { batchSize: 1 }, batched(runTreeIndex));
+  await boss.work<TreeIndexJob>(QUEUES.treeIndex, { batchSize: WORKER_BATCH_SIZES[QUEUES.treeIndex] }, batched(runTreeIndex));
 
   // Installs run one at a time: each holds an SSH session for tens of seconds.
-  await boss.work<AgentInstallJob>(QUEUES.agentInstall, { batchSize: 1 }, batched(runAgentInstall));
+  await boss.work<AgentInstallJob>(QUEUES.agentInstall, { batchSize: WORKER_BATCH_SIZES[QUEUES.agentInstall] }, batched(runAgentInstall));
 
   // Every 30 seconds, so latency and status stay current without anyone
   // pressing a button. Skips servers whose breaker is open.
-  await boss.work(QUEUES.healthSweep, { batchSize: 1 }, async () => {
+  await boss.work(QUEUES.healthSweep, { batchSize: WORKER_BATCH_SIZES[QUEUES.healthSweep] }, async () => {
     const result = await runHealthSweep();
     const stale = await markStaleAgents();
     if (result.probed || result.failed) console.info("Health sweep complete", { ...result, staleAgents: stale });
   });
 
-  await boss.work(QUEUES.retention, { batchSize: 1 }, async () => {
+  await boss.work(QUEUES.retention, { batchSize: WORKER_BATCH_SIZES[QUEUES.retention] }, async () => {
     const result = await runRetentionSweep();
     console.info("Retention sweep complete", result);
   });
 
-  await boss.work(QUEUES.tokenPrune, { batchSize: 1 }, async () => {
+  await boss.work(QUEUES.tokenPrune, { batchSize: WORKER_BATCH_SIZES[QUEUES.tokenPrune] }, async () => {
     const metrics = await pruneOldMetrics();
     const tokens = await runTokenPrune();
     const sessions = await runSessionPrune();
     console.info("Credential prune complete", { tokens, sessions, metrics });
   });
 
-  await boss.work(QUEUES.monitorSweep, { batchSize: 1 }, async () => {
+  await boss.work(QUEUES.monitorSweep, { batchSize: WORKER_BATCH_SIZES[QUEUES.monitorSweep] }, async () => {
     const enqueued = await sweepDueAutomations();
     if (enqueued > 0) console.info("Scheduled automations enqueued", { enqueued });
   });

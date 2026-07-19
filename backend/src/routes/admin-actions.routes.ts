@@ -541,6 +541,70 @@ adminActionsRouter.post(
  * Jobs
  * ------------------------------------------------------------------------ */
 
+interface JobRow {
+  id: string;
+  queue: string;
+  state: string;
+  attempts: number;
+  retryLimit: number;
+  createdAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  output: unknown;
+  deadLetter: string | null;
+  organizationName: string | null;
+  transferName: string | null;
+  transferProgress: number | null;
+  sourcePath: string | null;
+  destinationPath: string | null;
+  serverName: string | null;
+  serverHost: string | null;
+}
+
+/** pg-boss states, in the vocabulary the console uses. */
+const JOB_STATE: Record<string, string> = {
+  created: "queued",
+  retry: "retrying",
+  active: "running",
+  completed: "complete",
+  cancelled: "cancelled",
+  failed: "failed",
+};
+
+function describeJob(row: JobRow) {
+  const status = JOB_STATE[row.state] ?? row.state;
+  const finished = status === "complete";
+
+  // Only transfers report partial completion. Everything else is binary, and a
+  // half-filled bar for a job with no such notion would be an invention.
+  const progress = row.transferProgress ?? (finished ? 100 : null);
+
+  const error = row.output && typeof row.output === "object" && "message" in row.output
+    ? String((row.output as { message: unknown }).message)
+    : null;
+
+  const endedAt = row.completedAt ?? (status === "running" ? new Date() : null);
+  const durationMs = row.startedAt && endedAt ? endedAt.getTime() - new Date(row.startedAt).getTime() : null;
+
+  return {
+    id: row.id,
+    type: row.queue,
+    name: row.transferName ?? row.queue,
+    organization: row.organizationName,
+    target: row.serverName ?? row.serverHost ?? row.destinationPath ?? row.sourcePath,
+    status,
+    progress,
+    attempts: row.attempts,
+    retryLimit: row.retryLimit,
+    createdAt: row.createdAt,
+    startedAt: row.startedAt,
+    completedAt: row.completedAt,
+    durationMs,
+    error,
+    deadLettered: Boolean(row.deadLetter) && status === "failed",
+  };
+}
+
 /** Queue depth per state, so a stalled worker is visible rather than inferred. */
 adminActionsRouter.get(
   "/jobs",
@@ -561,6 +625,184 @@ adminActionsRouter.get(
       }),
     );
     response.json({ data: queues });
+  }),
+);
+
+/**
+ * Individual jobs, read from pg-boss's own tables.
+ *
+ * A job id in this list is the real pg-boss id, so anything shown here can be
+ * found in the queue. Progress comes from the transfers table where the job is
+ * a transfer, because pg-boss itself has no concept of partial completion — for
+ * every other queue a job is either running or it is not, and the list says so
+ * rather than animating a bar that means nothing.
+ */
+adminActionsRouter.get(
+  "/jobs/list",
+  asyncHandler(async (request, response) => {
+    const state = typeof request.query.state === "string" ? request.query.state : "";
+    // The id columns inside a job payload are text, and a payload without one
+    // must not abort the whole query on a failed cast.
+    const asUuid = (path: string) =>
+      `CASE WHEN j.data->>'${path}' ~ '^[0-9a-fA-F-]{36}$' THEN (j.data->>'${path}')::uuid END`;
+
+    const result = await pool.query(
+      `SELECT j.id, j.name AS queue, j.state, j.retry_count AS "attempts", j.retry_limit AS "retryLimit",
+              j.created_on AS "createdAt", j.started_on AS "startedAt", j.completed_on AS "completedAt",
+              j.output, j.dead_letter AS "deadLetter",
+              o.name AS "organizationName",
+              t.name AS "transferName", t.progress AS "transferProgress",
+              t.source_path AS "sourcePath", t.destination_path AS "destinationPath",
+              s.name AS "serverName", s.host AS "serverHost"
+         FROM pgboss.job j
+         LEFT JOIN organizations o ON o.id = ${asUuid("organizationId")}
+         LEFT JOIN transfers t ON t.id = ${asUuid("transferId")}
+         LEFT JOIN server_connections s ON s.id = ${asUuid("serverId")}
+        -- state is an enum, so the comparison is made in text to keep an
+        -- unknown filter value a no-op rather than a type error.
+        WHERE ($1 = '' OR j.state::text = $1)
+        ORDER BY j.created_on DESC
+        LIMIT 200`,
+      [state],
+    );
+
+    response.json({ data: result.rows.map(describeJob) });
+  }),
+);
+
+/** Batch sizes the workers are actually registered with, not a target. */
+adminActionsRouter.get(
+  "/jobs/pools",
+  asyncHandler(async (_request, response) => {
+    const { QUEUES, WORKER_BATCH_SIZES } = await import("../queue/index.js");
+    const stats = await pool.query<{ name: string; active_count: number; queued_count: number }>(
+      "SELECT name, active_count, queued_count FROM pgboss.queue",
+    );
+    const byName = new Map(stats.rows.map((row) => [row.name, row]));
+
+    response.json({
+      data: Object.values(QUEUES).map((name) => {
+        const batchSize = WORKER_BATCH_SIZES[name] ?? 1;
+        const active = byName.get(name)?.active_count ?? 0;
+        return {
+          name,
+          active,
+          // Concurrency ceiling for this queue in one worker process.
+          capacity: batchSize,
+          queued: byName.get(name)?.queued_count ?? 0,
+          // Share of this queue's concurrency in use. Over 100 is possible when
+          // several worker processes are running, and is worth seeing.
+          load: batchSize ? Math.round((active / batchSize) * 100) : 0,
+        };
+      }),
+    });
+  }),
+);
+
+/**
+ * Dispatch latency: how long a job waited between being created and being
+ * started, per queue. This is the number that grows when workers cannot keep
+ * up, which queue depth alone does not distinguish from a quiet period.
+ */
+adminActionsRouter.get(
+  "/jobs/latency",
+  asyncHandler(async (_request, response) => {
+    const result = await pool.query(
+      `SELECT name AS queue,
+              count(*)::integer AS samples,
+              round(percentile_cont(0.95) WITHIN GROUP (
+                ORDER BY EXTRACT(EPOCH FROM (started_on - created_on))
+              )::numeric, 2) AS "p95Seconds"
+         FROM pgboss.job
+        WHERE started_on IS NOT NULL AND created_on > now() - interval '24 hours'
+        GROUP BY name
+        ORDER BY name`,
+    );
+    response.json({ data: result.rows.map((row) => ({ ...row, p95Seconds: Number(row.p95Seconds) })) });
+  }),
+);
+
+/** Whether new work is being held at ingress, and how much is waiting. */
+adminActionsRouter.get(
+  "/jobs/intake",
+  asyncHandler(async (_request, response) => {
+    const { isIntakePaused, heldJobCount } = await import("../queue/intake.js");
+    const [paused, held] = await Promise.all([isIntakePaused(), heldJobCount()]);
+    response.json({ data: { paused, held } });
+  }),
+);
+
+adminActionsRouter.post(
+  "/jobs/intake",
+  asyncHandler(async (request, response) => {
+    const input = z.object({ paused: z.boolean() }).parse(request.body);
+    const { setIntakePaused, releaseHeldJobs } = await import("../queue/intake.js");
+
+    await setIntakePaused(input.paused, request.auth!.userId);
+    // Resuming releases what the pause held, so the operator does not have to
+    // find and requeue it by hand.
+    const released = input.paused ? 0 : await releaseHeldJobs();
+
+    await recordPlatformAction(request, {
+      action: input.paused ? "queue.pause" : "queue.resume",
+      targetType: "queue",
+      targetId: "all",
+      metadata: { released },
+    });
+    response.json({ data: { paused: input.paused, released } });
+  }),
+);
+
+/** Requeue a failed job by copying its payload back onto its queue. */
+adminActionsRouter.post(
+  "/jobs/:id/retry",
+  asyncHandler(async (request, response) => {
+    const jobId = routeParam(request, "id");
+    const found = await pool.query<{ name: string; data: unknown; state: string }>(
+      "SELECT name, data, state FROM pgboss.job WHERE id = $1",
+      [jobId],
+    );
+    const job = found.rows[0];
+    if (!job) throw notFound("Job");
+    if (job.state !== "failed" && job.state !== "cancelled") {
+      throw conflict("Only a failed or cancelled job can be retried");
+    }
+
+    const { getBoss } = await import("../queue/index.js");
+    const boss = await getBoss();
+    // A new job rather than a mutated one: the original stays in place as the
+    // record of what failed and when.
+    const newId = await boss.send(job.name, job.data as object);
+
+    await recordPlatformAction(request, {
+      action: "job.retry", targetType: "job", targetId: jobId,
+      metadata: { queue: job.name, replacementId: newId },
+    });
+    response.status(201).json({ data: { id: newId, queue: job.name } });
+  }),
+);
+
+/** Cancel a job that has not finished. */
+adminActionsRouter.post(
+  "/jobs/:id/cancel",
+  asyncHandler(async (request, response) => {
+    const jobId = routeParam(request, "id");
+    const found = await pool.query<{ name: string; state: string }>(
+      "SELECT name, state FROM pgboss.job WHERE id = $1",
+      [jobId],
+    );
+    const job = found.rows[0];
+    if (!job) throw notFound("Job");
+
+    const { getBoss } = await import("../queue/index.js");
+    const boss = await getBoss();
+    await boss.cancel(job.name, jobId);
+
+    await recordPlatformAction(request, {
+      action: "job.cancel", targetType: "job", targetId: jobId,
+      metadata: { queue: job.name, previousState: job.state },
+    });
+    response.json({ data: { cancelled: true } });
   }),
 );
 

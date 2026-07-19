@@ -183,6 +183,39 @@ export interface AdminQueue {
   total: number;
 }
 
+export interface AdminJob {
+  id: string;
+  type: string;
+  name: string;
+  organization: string | null;
+  target: string | null;
+  status: "queued" | "running" | "retrying" | "complete" | "cancelled" | "failed";
+  /** null for queues that have no notion of partial completion. */
+  progress: number | null;
+  attempts: number;
+  retryLimit: number;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
+  error: string | null;
+  deadLettered: boolean;
+}
+
+export interface AdminWorkerPool {
+  name: string;
+  active: number;
+  capacity: number;
+  queued: number;
+  load: number;
+}
+
+export interface AdminQueueLatency {
+  queue: string;
+  samples: number;
+  p95Seconds: number;
+}
+
 export interface PlatformAuditEntry {
   id: number;
   actorEmail: string;
@@ -227,6 +260,13 @@ export const adminApi = {
   supportMetrics: () => api.get<AdminSupportMetrics>("/admin/support/metrics"),
 
   jobs: () => api.get<AdminQueue[]>("/admin/jobs"),
+  jobList: (state?: string) => api.get<AdminJob[]>(`/admin/jobs/list${state ? `?state=${state}` : ""}`),
+  workerPools: () => api.get<AdminWorkerPool[]>("/admin/jobs/pools"),
+  queueLatency: () => api.get<AdminQueueLatency[]>("/admin/jobs/latency"),
+  retryJob: (id: string) => api.post<{ id: string; queue: string }>(`/admin/jobs/${encodeURIComponent(id)}/retry`, {}),
+  cancelJob: (id: string) => api.post(`/admin/jobs/${encodeURIComponent(id)}/cancel`, {}),
+  intake: () => api.get<{ paused: boolean; held: number }>("/admin/jobs/intake"),
+  setIntake: (paused: boolean) => api.post<{ paused: boolean; released: number }>("/admin/jobs/intake", { paused }),
   platformAudit: (action?: string) => api.get<PlatformAuditEntry[]>(`/admin/platform-audit${action ? `?action=${action}` : ""}`),
 
   directory: async (): Promise<AdminDirectory> => {
