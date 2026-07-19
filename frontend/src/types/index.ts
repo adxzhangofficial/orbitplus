@@ -81,7 +81,9 @@ export interface Backup {
   name: string;
   server: string;
   type: "full" | "incremental" | "snapshot";
-  status: "complete" | "running" | "failed" | "scheduled";
+  // Mirrors the API's states. Backups run on the queue, so a row exists before
+  // any bytes have been read and stays visible while it is being restored.
+  status: "queued" | "scheduled" | "running" | "restoring" | "complete" | "failed";
   size: number;
   files: number;
   createdAt: string;

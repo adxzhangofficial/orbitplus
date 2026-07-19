@@ -14,10 +14,26 @@ const previewSchedules = [
   { id: "s3", name: "Staging weekly", server: "Staging", cadence: "Sunday · 04:30 UTC", retention: "7 days", enabled: false },
 ];
 type ServerOption = { id: string; name: string };
-type BackendBackup = { id: string; serverId: string; serverName?: string; name: string; path: string; status: string; sizeBytes: number | string; fileCount: number; retentionUntil: string; createdAt: string };
+type BackendBackup = { id: string; serverId: string; serverName?: string; name: string; path: string; type: string; status: string; sizeBytes: number | string; fileCount: number; retentionUntil: string; createdAt: string; errorMessage?: string | null };
 
+/**
+ * Snapshots are encrypted at rest by createSnapshot, so `encrypted` is stated
+ * rather than guessed. `type` comes from the API now that a partial snapshot is
+ * distinguishable from a full one.
+ */
 function toBackup(item: BackendBackup): Backup {
-  return { id: item.id, name: item.name, server: item.serverName ?? "Server", type: "snapshot", status: item.status === "completed" ? "complete" : item.status as Backup["status"], size: Number(item.sizeBytes ?? 0), files: Number(item.fileCount ?? 0), createdAt: item.createdAt, retentionUntil: item.retentionUntil, encrypted: false };
+  return {
+    id: item.id,
+    name: item.name,
+    server: item.serverName ?? "Server",
+    type: item.type === "partial" ? "incremental" : "full",
+    status: item.status === "completed" ? "complete" : (item.status as Backup["status"]),
+    size: Number(item.sizeBytes ?? 0),
+    files: Number(item.fileCount ?? 0),
+    createdAt: item.createdAt,
+    retentionUntil: item.retentionUntil,
+    encrypted: true,
+  };
 }
 
 export function BackupsPage() {
@@ -46,12 +62,22 @@ export function BackupsPage() {
       setItems((current) => [{ id: `b_${Date.now()}`, name: draft.name, server: server.name, type: draft.type, status: "running", size: 0, files: 0, createdAt: new Date().toISOString(), retentionUntil: new Date(Date.now() + draft.retentionDays * 86_400_000).toISOString(), encrypted: true }, ...current]);
     }
     setCreateOpen(false);
-    toast.success(live ? "Recovery point created" : "Preview backup started");
+    // Queued, not finished. A snapshot of a real tree takes minutes, and the
+    // list polls, so the row's status is what reports the outcome.
+    toast.success(live ? "Backup queued" : "Preview backup started", {
+      description: live ? "The recovery point appears here once the snapshot completes." : undefined,
+    });
   }
 
   async function restore(item: Backup) {
     if (!live) { toast.success(`Preview restore for ${item.name} queued`); return; }
-    try { await api.post(`/backups/${item.id}/restore`); toast.success(`${item.name} restored`); await backups.refresh(); }
+    try {
+      await api.post(`/backups/${item.id}/restore`);
+      toast.success(`Restore queued for ${item.name}`, {
+        description: "Files are written back in the background; the status updates here.",
+      });
+      await backups.refresh();
+    }
     catch (error) { toast.error(error instanceof Error ? error.message : "Unable to restore backup"); }
   }
 
