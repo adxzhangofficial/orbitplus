@@ -51,8 +51,11 @@ export class SftpAdapter implements RemoteFilesystem {
       host: resolvedHost,
       port: this.server.port,
       username: this.server.username,
-      readyTimeout: 15_000,
-      retries: 1,
+      // Kept short because a pooled connection is reused across requests, so
+      // this cost is paid once rather than per click, and an unreachable host
+      // must surface quickly instead of stalling the UI.
+      readyTimeout: 8_000,
+      retries: 0,
       hostHash: "sha256",
       hostVerifier: (fingerprint: string) => {
         const presented = fingerprint.toLowerCase().replace(/:/g, "");

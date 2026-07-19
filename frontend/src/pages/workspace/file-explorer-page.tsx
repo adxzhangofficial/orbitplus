@@ -109,6 +109,8 @@ export function FileExplorerPage() {
   const [versions, setVersions] = useState<FileVersion[]>([]);
   const [uploading, setUploading] = useState(false);
   const uploadRef = useRef<HTMLInputElement>(null);
+  /** Listings already fetched this session, keyed by remote path. */
+  const cacheRef = useRef(new Map<string, RemoteFile[]>());
   const unsaved = content !== savedContent;
   const visibleFiles = useMemo(() => files.filter((file) => (showHidden || !file.name.startsWith(".")) && file.name.toLowerCase().includes(query.toLowerCase())), [files, showHidden, query]);
   const lineCount = content.split("\n").length;
@@ -127,17 +129,34 @@ export function FileExplorerPage() {
     return remote;
   }, [serverId]);
 
-  /** Lists one directory. Every navigation goes through here, so the table
-   *  always reflects what is actually on the server at this path. */
-  const loadDirectory = useCallback(async (target: string, owner?: string) => {
-    setLoading(true);
-    setLoadError(undefined);
+  /**
+   * Lists one directory, showing any previously loaded contents immediately
+   * while the fresh listing is fetched.
+   *
+   * Navigating back into a folder you have already visited should feel like a
+   * local file manager, so the cached entries render at once and are replaced
+   * when the server answers. `force` skips the cache for an explicit refresh.
+   */
+  const loadDirectory = useCallback(async (target: string, owner?: string, force = false) => {
+    const cached = cacheRef.current.get(target);
+    if (cached && !force) {
+      setFiles(cached);
+      setLoadError(undefined);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const entries = await api.get<RemoteEntry[]>(`/servers/${serverId}/files?path=${encodeURIComponent(target)}`);
-      setFiles(entries.map((entry, index) => toRemoteFile(entry, owner ?? server?.username ?? "", index)));
+      const mapped = entries.map((entry, index) => toRemoteFile(entry, owner ?? server?.username ?? "", index));
+      cacheRef.current.set(target, mapped);
+      setFiles(mapped);
+      setLoadError(undefined);
       setSelectedIds([]);
     } catch (error) {
-      setFiles([]);
+      // A cached listing stays on screen rather than blanking the view, so a
+      // transient failure does not lose the user's place.
+      if (!cached) setFiles([]);
       setLoadError(error instanceof Error ? error.message : "Could not list this directory");
     } finally {
       setLoading(false);
@@ -212,7 +231,7 @@ export function FileExplorerPage() {
     try {
       const uploaded = await api.upload<Array<{ path: string }>>(`/servers/${serverId}/files/upload`, body);
       toast.success(`${uploaded.length} file${uploaded.length === 1 ? "" : "s"} uploaded`);
-      await loadDirectory(path);
+      await loadDirectory(path, undefined, true);
     } catch (error) {
       toast.error("Upload failed", { description: error instanceof Error ? error.message : undefined });
     } finally {
@@ -251,7 +270,7 @@ export function FileExplorerPage() {
       else await api.put(`/servers/${serverId}/files/content`, { path: target, content: "", encoding: "utf8", note: "Created in the Orbit workspace" });
       setNewName(""); setCreateOpen(null);
       toast.success(`${createOpen === "folder" ? "Folder" : "File"} created`);
-      await loadDirectory(path);
+      await loadDirectory(path, undefined, true);
     } catch (error) {
       toast.error("Could not create item", { description: error instanceof Error ? error.message : undefined });
     }
@@ -277,7 +296,7 @@ export function FileExplorerPage() {
     setSelectedIds([]);
     if (selected && targets.some((file) => file.id === selected.id)) { setSelected(undefined); setPanel(false); }
     if (removed) toast.success(`${removed} item${removed === 1 ? "" : "s"} deleted`, { description: "A snapshot was captured before removal." });
-    await loadDirectory(path);
+    await loadDirectory(path, undefined, true);
   }
   // Nothing below can render meaningfully without the server record, and the
   // whole page depends on it, so this gate keeps every later access non-null.
@@ -295,7 +314,7 @@ export function FileExplorerPage() {
     <div className="flex h-[calc(100vh-56px)] min-h-[640px] flex-col md:h-screen">
       <header className="flex min-h-14 items-center gap-3 border-b border-border px-3 sm:px-4"><Link to={`/workspace/servers/${server.id}`} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"><ArrowLeft className="size-3.5" /></Link><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h1 className="truncate text-xs font-medium">{server.name}</h1><Badge tone="success" dot>Connected</Badge></div><p className="mt-0.5 hidden font-mono text-[8px] text-zinc-600 sm:block">{server.username}@{server.host} · SFTP</p></div><div className="hidden items-center gap-2 sm:flex">
         <input ref={uploadRef} type="file" multiple hidden onChange={(event) => void uploadFiles(event.target.files)} />
-        <Button variant="outline" size="sm" disabled={loading} onClick={() => void loadDirectory(path)}><RefreshCw className={loading ? "animate-spin" : undefined} />Refresh</Button>
+        <Button variant="outline" size="sm" disabled={loading} onClick={() => void loadDirectory(path, undefined, true)}><RefreshCw className={loading ? "animate-spin" : undefined} />Refresh</Button>
         <Button size="sm" disabled={uploading} onClick={() => uploadRef.current?.click()}><Upload />{uploading ? "Uploading…" : "Upload"}</Button>
       </div><IconButton label="More actions"><MoreHorizontal /></IconButton></header>
 
