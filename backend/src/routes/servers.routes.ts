@@ -1,6 +1,9 @@
 import { Router } from "express";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
+import { env } from "../config/env.js";
 import { withAdapter } from "../adapters/index.js";
+import { discoverHostFingerprint } from "../adapters/host-key.js";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { encryptJson } from "../lib/crypto.js";
@@ -111,6 +114,40 @@ serversRouter.get(
     );
     if (!result.rows[0]) throw notFound("Server");
     response.json({ data: result.rows[0] });
+  }),
+);
+
+/**
+ * Retrieves a server's host key so the user does not have to run ssh-keyscan
+ * by hand. Rate limited because it opens an outbound connection to a
+ * caller-supplied host.
+ */
+serversRouter.post(
+  "/discover-fingerprint",
+  requireRole("admin"),
+  rateLimit({
+    windowMs: 60_000,
+    limit: env.NODE_ENV === "test" ? 1_000 : 10,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    keyGenerator: (request) => request.tenant?.organizationId ?? ipKeyGenerator(request.ip ?? ""),
+  }),
+  asyncHandler(async (request, response) => {
+    const input = z.object({
+      host: z.string().trim().min(1).max(253),
+      port: z.number().int().min(1).max(65535).default(22),
+    }).parse(request.body);
+
+    const discovered = await discoverHostFingerprint(input.host, input.port);
+    response.json({
+      data: {
+        ...discovered,
+        // Surfaced so the UI can state plainly what accepting this means,
+        // rather than presenting first-contact discovery as verification.
+        trustModel: "trust-on-first-use",
+        advisory: "Compare this fingerprint with the value published by your host or provider. Once saved it is pinned, and any future change will block the connection.",
+      },
+    });
   }),
 );
 

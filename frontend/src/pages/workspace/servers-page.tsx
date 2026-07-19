@@ -38,9 +38,14 @@ const blankConnection = {
   hostFingerprint: "",
 };
 
+interface DiscoveredKey { fingerprint: string; sha256: string; keyType: string; advisory: string; }
+
 export function ServersPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [servers, setServers] = useState<Server[]>(seededServers);
+  const [discovering, setDiscovering] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredKey>();
+  const [discoverError, setDiscoverError] = useState<string>();
   const [query, setQuery] = useState("");
   const [environment, setEnvironment] = useState("all");
   const [status, setStatus] = useState("all");
@@ -103,6 +108,28 @@ export function ServersPage() {
     hostFingerprint: connection.hostFingerprint,
     settings: { concurrency: 4, connectionTimeout: 15_000, keepaliveInterval: 10_000 },
   };
+  /**
+   * Reads the server's host key so the user is not sent away to run
+   * ssh-keyscan. This is trust on first use: the value is shown for comparison
+   * against whatever the provider published, and pinned once saved.
+   */
+  async function retrieveFingerprint() {
+    setDiscovering(true);
+    setDiscoverError(undefined);
+    try {
+      const result = await api.post<DiscoveredKey>("/servers/discover-fingerprint", {
+        host: connection.host,
+        port: Number(connection.port) || 22,
+      });
+      setDiscovered(result);
+      setConnection((current) => ({ ...current, hostFingerprint: result.fingerprint }));
+    } catch (error) {
+      setDiscoverError(error instanceof Error ? error.message : "Could not read the host key. Check the address and port.");
+    } finally {
+      setDiscovering(false);
+    }
+  }
+
   async function testConnection() {
     if (!localStorage.getItem("orbit.accessToken")) {
       toast.error("Sign in to verify a real SFTP connection", { description: "Demo preview sessions cannot reach or store server credentials." });
@@ -188,7 +215,31 @@ export function ServersPage() {
                 : <Input value={connection.secret} onChange={update("secret")} type="password" placeholder="••••••••••••" autoComplete="new-password" />}
             </Field>
             {connection.authenticationType === "privateKey" && <Field label="Key passphrase" hint="Optional"><Input value={connection.passphrase} onChange={update("passphrase")} type="password" autoComplete="off" /></Field>}
-            <Field label="Pinned host fingerprint" hint="Required. Paste the SHA256 fingerprint obtained through a trusted channel."><Input value={connection.hostFingerprint} onChange={update("hostFingerprint")} placeholder="SHA256:base64-fingerprint" spellCheck={false} className="font-mono" /></Field>
+            <Field label="Host key" hint="Orbit reads the key directly from your server. Compare it with the value your provider published, then confirm.">
+              {connection.hostFingerprint
+                ? <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/[0.04] p-3">
+                    <div className="flex items-start gap-2">
+                      <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-emerald-300" />
+                      <div className="min-w-0 flex-1">
+                        <p className="break-all font-mono text-[10px] text-zinc-200">{connection.hostFingerprint}</p>
+                        {discovered?.keyType && <p className="mt-1 text-[8px] uppercase tracking-wider text-zinc-600">{discovered.keyType} · retrieved from {connection.host}:{connection.port}</p>}
+                        <p className="mt-2 text-[9px] leading-4 text-zinc-500">Pinned once saved. If this server ever presents a different key, Orbit refuses the connection rather than trusting it.</p>
+                      </div>
+                      <button type="button" onClick={() => { setConnection((c) => ({ ...c, hostFingerprint: "" })); setDiscovered(undefined); }} className="text-[9px] text-zinc-500 hover:text-zinc-300">Change</button>
+                    </div>
+                  </div>
+                : <div className="space-y-2">
+                    <Button type="button" variant="outline" className="w-full" disabled={discovering || !connection.host} onClick={() => void retrieveFingerprint()}>
+                      {discovering ? <><RefreshCw className="animate-spin" />Reading host key…</> : <><ShieldCheck />Retrieve host key from {connection.host || "server"}</>}
+                    </Button>
+                    {discoverError && <p className="rounded-md border border-red-400/15 bg-red-400/5 p-2.5 text-[9px] text-red-300">{discoverError}</p>}
+                    <details className="text-[9px] text-zinc-600">
+                      <summary className="cursor-pointer hover:text-zinc-400">Paste it manually instead</summary>
+                      <Input value={connection.hostFingerprint} onChange={update("hostFingerprint")} placeholder="SHA256:base64-fingerprint" spellCheck={false} className="mt-2 font-mono" />
+                      <p className="mt-1.5">Run <code className="text-zinc-500">ssh-keyscan -t ed25519 {connection.host || "host"} | ssh-keygen -lf -</code> on a machine you trust.</p>
+                    </details>
+                  </div>}
+            </Field>
             <div className="rounded-lg border border-blue-400/15 bg-blue-400/[0.04] p-3"><div className="flex gap-3"><KeyRound className="mt-0.5 size-3.5 text-blue-300" /><div><p className="text-[10px] font-medium text-blue-200">Credentials stay server-side</p><p className="mt-1 text-[9px] leading-4 text-blue-200/55">Secrets are sent only to the authenticated API, encrypted before storage, and never returned to the browser or exposed in logs.</p></div></div></div>
           </div>
         )}
