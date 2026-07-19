@@ -17,6 +17,7 @@ import { billingRouter } from "./routes/billing.routes.js";
 import { deploymentsRouter } from "./routes/deployments.routes.js";
 import { filesRouter } from "./routes/files.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
+import { integrationsRouter } from "./routes/integrations.routes.js";
 import { monitoringRouter } from "./routes/monitoring.routes.js";
 import { notificationsRouter } from "./routes/notifications.routes.js";
 import { organizationRouter } from "./routes/organization.routes.js";
@@ -83,6 +84,7 @@ export function createApp() {
   customer.use("/notifications", notificationsRouter);
   customer.use("/team", teamRouter);
   customer.use("/billing", billingRouter);
+  customer.use("/integrations", integrationsRouter);
   customer.use("/terminal", terminalRouter);
   const admin = Router();
   admin.use(authenticate, requirePlatformAdmin);

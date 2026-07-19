@@ -3,6 +3,7 @@ import { pool } from "../database/pool.js";
 import type { TransferJob } from "../queue/index.js";
 import { writeVersioned } from "../services/file.service.js";
 import { serverForTenant } from "../services/server.service.js";
+import { dispatchEvent } from "../services/integration.service.js";
 
 async function progress(transferId: string, percent: number, bytes?: number): Promise<void> {
   await pool.query(
@@ -65,6 +66,17 @@ export async function runTransfer(job: TransferJob): Promise<void> {
           WHERE id = $1`,
         [job.transferId, content.length],
       );
+      // Dispatched after the state is committed, so an integration never sees
+      // a completion the database has not recorded.
+      await dispatchEvent({
+        event: 'transfer.completed',
+        organizationId: job.organizationId,
+        title: 'Transfer completed',
+        message: `${job.direction} of ${job.destinationPath} finished on ${server.name}.`,
+        severity: 'success',
+        resource: { type: 'transfer', id: job.transferId, name: job.destinationPath },
+        occurredAt: new Date().toISOString(),
+      }).catch(() => undefined);
     });
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 1000) : "Transfer failed";
@@ -72,6 +84,15 @@ export async function runTransfer(job: TransferJob): Promise<void> {
       `UPDATE transfers SET status = 'failed', error_message = $2, completed_at = now() WHERE id = $1`,
       [job.transferId, message],
     );
+    await dispatchEvent({
+      event: 'transfer.failed',
+      organizationId: job.organizationId,
+      title: 'Transfer failed',
+      message,
+      severity: 'critical',
+      resource: { type: 'transfer', id: job.transferId, name: job.destinationPath },
+      occurredAt: new Date().toISOString(),
+    }).catch(() => undefined);
     // Rethrown so pg-boss records the failure and applies its retry policy.
     throw error;
   }

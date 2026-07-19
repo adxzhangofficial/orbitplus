@@ -1,6 +1,11 @@
 import { withAdapter } from "../adapters/index.js";
 import { breakerFor } from "../adapters/connection-pool.js";
 import { pool } from "../database/pool.js";
+// Aliased because `dispatchEvent` is also a global in the DOM lib, and an
+// unqualified call silently resolved to that instead of this module.
+import { dispatchEvent as dispatchIntegrationEvent } from "../services/integration.service.js";
+import { pruneAuthTokens } from "../services/auth-token.service.js";
+import { pruneExpiredVersions } from "../services/file.service.js";
 
 /**
  * Probes every active server on a schedule.
@@ -64,12 +69,35 @@ export async function runHealthSweep(): Promise<{ probed: number; skipped: numbe
         JSON.stringify([{ name: "sftp", status: ok ? "up" : "down", message: message.slice(0, 300) }]),
       ],
     );
+    // Compared against the stored status so only a transition is announced.
+    // Emitting on every sweep would send an alert a minute for a host that is
+    // simply down, which trains people to ignore the channel.
+    const previous = await pool.query<{ status: string }>(
+      "SELECT status FROM server_connections WHERE id = $1",
+      [row.id],
+    );
+    const wasOnline = previous.rows[0]?.status === "online";
+
     await pool.query(
       `UPDATE server_connections
           SET status = $2, last_checked_at = now(), last_latency_ms = $3
         WHERE id = $1`,
       [row.id, ok ? "online" : "offline", ok ? latencyMs : null],
     );
+
+    if (wasOnline !== ok) {
+      await dispatchIntegrationEvent({
+        event: ok ? "server.online" : "server.offline",
+        organizationId: row.organization_id,
+        title: ok ? `${row.name} is reachable again` : `${row.name} is unreachable`,
+        message: ok
+          ? `Responded in ${latencyMs} ms.`
+          : message.slice(0, 400) || "The connection could not be established.",
+        severity: ok ? "success" : "critical",
+        resource: { type: "server", id: row.id, name: row.name },
+        occurredAt: new Date().toISOString(),
+      }).catch(() => undefined);
+    }
   }
 
   return { probed, skipped, failed };

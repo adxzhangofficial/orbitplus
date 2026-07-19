@@ -3,6 +3,7 @@ import { pool } from "../database/pool.js";
 import type { BackupJob } from "../queue/index.js";
 import { createSnapshot, restoreSnapshot } from "../services/backup.service.js";
 import { serverForTenant } from "../services/server.service.js";
+import { dispatchEvent } from "../services/integration.service.js";
 
 export async function runBackup(job: BackupJob): Promise<void> {
   const claimed = await pool.query(
@@ -24,11 +25,31 @@ export async function runBackup(job: BackupJob): Promise<void> {
         WHERE id = $1`,
       [job.backupId, snapshot.storageKey, snapshot.sizeBytes, snapshot.fileCount],
     );
+    await dispatchEvent({
+      event: "backup.completed",
+      organizationId: job.organizationId,
+      title: "Backup completed",
+      message: `${snapshot.fileCount} files captured from ${server.name}.`,
+      severity: "success",
+      resource: { type: "backup", id: job.backupId, name: server.name },
+      occurredAt: new Date().toISOString(),
+    }).catch(() => undefined);
   } catch (error) {
     await pool.query(
       "UPDATE backups SET status = 'failed', error_message = $2, completed_at = now() WHERE id = $1",
       [job.backupId, error instanceof Error ? error.message.slice(0, 1000) : "Backup failed"],
     );
+    // A failed backup is the case most worth telling someone about: nobody
+    // discovers it until they need to restore.
+    await dispatchEvent({
+      event: "backup.failed",
+      organizationId: job.organizationId,
+      title: "Backup failed",
+      message: error instanceof Error ? error.message.slice(0, 500) : "Backup failed",
+      severity: "critical",
+      resource: { type: "backup", id: job.backupId },
+      occurredAt: new Date().toISOString(),
+    }).catch(() => undefined);
     throw error;
   }
 }
