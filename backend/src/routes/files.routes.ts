@@ -13,6 +13,7 @@ import { routeParam } from "../lib/route-param.js";
 import { requireRole } from "../middleware/auth.js";
 import { enforceFileLimit, moveVersionsForTenant, readOptional, readOptionalDeleteSnapshot, saveVersion, versionForTenant, writeVersioned } from "../services/file.service.js";
 import { serverForTenant } from "../services/server.service.js";
+import { invalidate, isFresh, listWithPrefetch, readCached } from "../services/directory-cache.js";
 
 const pathQuery = z.object({ path: z.string().max(2048).default("/") });
 const writeSchema = z.object({
@@ -35,13 +36,47 @@ const upload = multer({
 
 export const filesRouter = Router({ mergeParams: true });
 
+const listQuery = pathQuery.extend({
+  /** Directories inside the target to fetch in the same request. */
+  prefetch: z.coerce.number().int().min(0).max(1).default(1),
+  /** Bypasses the cache for an explicit refresh. */
+  fresh: z.coerce.boolean().default(false),
+});
+
 filesRouter.get(
   "/",
   asyncHandler(async (request, response) => {
-    const query = pathQuery.parse(request.query);
-    const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
-    const entries = await withAdapter(server, (adapter) => adapter.list(normalizeRemotePath(query.path)));
-    response.json({ data: entries, meta: { path: normalizeRemotePath(query.path), count: entries.length } });
+    const query = listQuery.parse(request.query);
+    const path = normalizeRemotePath(query.path);
+    const organizationId = request.tenant!.organizationId;
+    const server = await serverForTenant(organizationId, routeParam(request, "serverId"));
+
+    // Served from cache when fresh. Browsing is bounded by network round trips,
+    // so the only way a click feels instant is to already hold the answer.
+    if (!query.fresh) {
+      const cached = readCached(organizationId, server.id, path);
+      if (cached && isFresh(cached.ageMs)) {
+        response.setHeader("x-orbit-cache", "hit");
+        response.json({ data: cached.entries, meta: { path, count: cached.entries.length, cached: true, ageMs: cached.ageMs } });
+        return;
+      }
+    }
+
+    const result = await withAdapter(server, (adapter) =>
+      listWithPrefetch(adapter, organizationId, server.id, path, query.prefetch),
+    );
+    response.setHeader("x-orbit-cache", "miss");
+    response.json({
+      data: result.entries,
+      meta: {
+        path,
+        count: result.entries.length,
+        cached: false,
+        // Subdirectory listings fetched alongside this one, so navigating into
+        // any of them needs no further request.
+        prefetched: result.prefetched,
+      },
+    });
   }),
 );
 
@@ -84,6 +119,7 @@ filesRouter.put(
       expectedChecksum: input.expectedChecksum,
       note: input.note,
     }));
+    invalidate(request.tenant!.organizationId, server.id, path);
     response.json({ data: { path, size: content.length, checksum: version.checksum, versionId: version.id, versionNumber: version.versionNumber } });
   }),
 );
@@ -166,6 +202,7 @@ filesRouter.post(
       return written;
     });
 
+    invalidate(request.tenant!.organizationId, server.id, directory);
     response.status(201).json({ data: results, meta: { directory, count: results.length } });
   }),
 );
@@ -203,6 +240,7 @@ filesRouter.post(
       await adapter.write(version.path, version.content);
       return saveVersion({ organizationId: request.tenant!.organizationId, serverId: server.id, path: version.path, content: version.content, userId: request.auth!.userId, operation: "rollback", note: input.note ?? `Restored ${version.id}` });
     });
+    invalidate(request.tenant!.organizationId, server.id, version.path);
     response.json({ data: { path: version.path, restoredFromVersionId: version.id, checksum: restored.checksum, versionNumber: restored.versionNumber } });
   }),
 );
@@ -215,6 +253,7 @@ filesRouter.post(
     const path = normalizeRemotePath(input.path);
     const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
     await withAdapter(server, (adapter) => adapter.mkdir(path));
+    invalidate(request.tenant!.organizationId, server.id, path);
     response.status(201).json({ data: { path, type: "directory" } });
   }),
 );
@@ -238,6 +277,8 @@ filesRouter.post(
         throw error;
       }
     });
+    invalidate(request.tenant!.organizationId, server.id, from);
+    invalidate(request.tenant!.organizationId, server.id, to);
     response.json({ data: { from, to } });
   }),
 );
@@ -254,6 +295,7 @@ filesRouter.delete(
       if (content) await saveVersion({ organizationId: request.tenant!.organizationId, serverId: server.id, path, content, userId: request.auth!.userId, operation: "delete", note: "Snapshot before deletion" });
       await adapter.delete(path, input.recursive);
     });
+    invalidate(request.tenant!.organizationId, server.id, path);
     response.status(204).send();
   }),
 );

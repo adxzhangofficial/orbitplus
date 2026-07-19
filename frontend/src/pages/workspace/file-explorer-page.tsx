@@ -138,6 +138,13 @@ export function FileExplorerPage() {
    * when the server answers. `force` skips the cache for an explicit refresh.
    */
   const loadDirectory = useCallback(async (target: string, owner?: string, force = false) => {
+    if (force) {
+      // A refresh follows a change, and a rename or recursive delete affects
+      // everything below the path, so descendants are dropped too.
+      for (const key of [...cacheRef.current.keys()]) {
+        if (key === target || key.startsWith(target === "/" ? "/" : `${target}/`)) cacheRef.current.delete(key);
+      }
+    }
     const cached = cacheRef.current.get(target);
     if (cached && !force) {
       setFiles(cached);
@@ -147,9 +154,23 @@ export function FileExplorerPage() {
       setLoading(true);
     }
     try {
-      const entries = await api.get<RemoteEntry[]>(`/servers/${serverId}/files?path=${encodeURIComponent(target)}`);
-      const mapped = entries.map((entry, index) => toRemoteFile(entry, owner ?? server?.username ?? "", index));
+      const resolvedOwner = owner ?? server?.username ?? "";
+      const envelope = await api.getEnvelope<RemoteEntry[]>(
+        `/servers/${serverId}/files?path=${encodeURIComponent(target)}&prefetch=1${force ? "&fresh=true" : ""}`,
+      );
+      const mapped = envelope.data.map((entry, index) => toRemoteFile(entry, resolvedOwner, index));
       cacheRef.current.set(target, mapped);
+
+      // Subdirectory listings the server fetched in the same round trip. Storing
+      // them means clicking into any of these folders needs no request at all,
+      // which is what makes navigation feel local on a high-latency link.
+      const prefetched = envelope.meta?.prefetched as Record<string, RemoteEntry[]> | undefined;
+      if (prefetched) {
+        for (const [childPath, childEntries] of Object.entries(prefetched)) {
+          cacheRef.current.set(childPath, childEntries.map((entry, index) => toRemoteFile(entry, resolvedOwner, index)));
+        }
+      }
+
       setFiles(mapped);
       setLoadError(undefined);
       setSelectedIds([]);

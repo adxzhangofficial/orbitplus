@@ -122,8 +122,38 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return parseResponse<T>(response);
 }
 
+/**
+ * Returns the whole envelope rather than just `data`.
+ *
+ * Some endpoints carry information alongside the payload that the caller needs,
+ * such as directory listings prefetched in the same round trip. Unwrapping to
+ * `data` would discard it.
+ */
+async function requestEnvelope<T>(path: string, init: RequestInit = {}): Promise<ApiEnvelope<T>> {
+  let response = await send(path, init, getAccessToken());
+  if (response.status === 401 && !path.startsWith("/auth/")) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) response = await send(path, init, refreshed);
+    else clearSession();
+  }
+  if (response.status === 204) return { data: undefined as T };
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const payload = body as Record<string, unknown>;
+    const nested = typeof payload.error === "object" && payload.error ? payload.error as Record<string, unknown> : payload;
+    throw new ApiError(
+      String(nested.message ?? `Request failed with status ${response.status}`),
+      response.status,
+      nested.code ? String(nested.code) : undefined,
+      nested.details,
+    );
+  }
+  return body as ApiEnvelope<T>;
+}
+
 export const api = {
   get: <T>(path: string, init?: RequestInit) => request<T>(path, init),
+  getEnvelope: <T>(path: string, init?: RequestInit) => requestEnvelope<T>(path, init),
   post: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: "POST", body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body) }),
   put: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: "PUT", body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body) }),
   patch: <T>(path: string, body?: unknown, init?: RequestInit) => request<T>(path, { ...init, method: "PATCH", body: body === undefined ? undefined : JSON.stringify(body) }),
