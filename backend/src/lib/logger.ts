@@ -36,6 +36,38 @@ export function currentLogContext(): LogContext {
   return storage.getStore() ?? {};
 }
 
+/**
+ * Field names whose values must never reach a log line.
+ *
+ * Nothing deliberately logs a credential today, but a log call is one of the
+ * easiest places for one to arrive by accident: someone logs a request body, a
+ * server record, or a caught error's config object, and a password lands in
+ * whatever ships the logs — where it outlives any rotation and is readable by
+ * anyone with log access.
+ *
+ * Matched on the key rather than the value, because a value cannot be
+ * recognised as secret by looking at it.
+ */
+const SECRET_KEY = /pass(word|phrase)?|secret|token|credential|privatekey|authorization|cookie|apikey|api_key|session|bearer/i;
+
+/** How deep to walk. A cycle or a huge object must not hang the logger. */
+const MAX_DEPTH = 6;
+
+function redact(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+  if (depth > MAX_DEPTH) return "[truncated]";
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+
+  if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1, seen));
+
+  const output: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    output[key] = SECRET_KEY.test(key) ? "[redacted]" : redact(nested, depth + 1, seen);
+  }
+  return output;
+}
+
 type Level = "error" | "warn" | "info" | "debug";
 
 const ORDER: Record<Level | "silent", number> = { silent: 0, error: 1, warn: 2, info: 3, debug: 4 };
@@ -72,7 +104,7 @@ function emit(level: Level, message: string, fields: Record<string, unknown> = {
     ...context,
   };
   for (const [key, value] of Object.entries(fields)) {
-    payload[key] = describe(value);
+    payload[key] = SECRET_KEY.test(key) ? "[redacted]" : redact(describe(value));
   }
 
   const line = env.NODE_ENV === "production"
@@ -80,7 +112,7 @@ function emit(level: Level, message: string, fields: Record<string, unknown> = {
     // Development: the message first, so a person scanning the terminal reads
     // what happened before the metadata.
     : `${level.toUpperCase().padEnd(5)} ${message}${context.requestId ? ` [${context.requestId.slice(0, 8)}]` : ""}${
-        Object.keys(fields).length ? ` ${JSON.stringify(Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, describe(value)])))}` : ""
+        Object.keys(fields).length ? ` ${JSON.stringify(Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, SECRET_KEY.test(key) ? "[redacted]" : redact(describe(value))])))}` : ""
       }`;
 
   // Warnings and errors go to stderr so they survive a pipeline that keeps only

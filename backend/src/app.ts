@@ -1,7 +1,6 @@
 import compression from "compression";
 import cors from "cors";
 import express, { Router } from "express";
-import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -39,6 +38,7 @@ import { authenticate, requirePlatformAdmin, requireScope, requireDomainScope, r
 import { auditMutations } from "./middleware/audit.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
 import { requestContext } from "./middleware/request-context.js";
+import { authLimiter, connectionLimiter, readLimiter, remoteLimiter } from "./middleware/rate-limit.js";
 
 export function createApp() {
   const app = express();
@@ -66,7 +66,7 @@ export function createApp() {
   api.use(statusRouter);
   // Machine-authenticated: agents present their own token, not a user session.
   api.use("/agent", agentRouter);
-  api.use("/auth", rateLimit({ windowMs: 60_000, limit: env.NODE_ENV === "test" ? 1_000 : 20, standardHeaders: "draft-8", legacyHeaders: false }), authRouter);
+  api.use("/auth", authLimiter, authRouter);
 
   const account = Router();
   account.use(authenticate);
@@ -77,16 +77,16 @@ export function createApp() {
   api.use(account);
 
   const customer = Router();
-  customer.use(authenticate, resolveTenant);
+  customer.use(authenticate, resolveTenant, readLimiter);
   customer.use("/overview", overviewRouter);
   customer.use("/organization", organizationRouter);
   customer.use("/workspaces", workspacesRouter);
   customer.use("/api-keys", apiKeysRouter);
-  customer.use("/servers/:serverId/files", requireDomainScope("files"), filesRouter);
-  customer.use("/servers", requireDomainScope("servers"), serversRouter);
-  customer.use("/transfers", requireDomainScope("transfers"), transfersRouter);
-  customer.use("/backups", requireDomainScope("backups"), backupsRouter);
-  customer.use("/deployments", requireDomainScope("deployments"), deploymentsRouter);
+  customer.use("/servers/:serverId/files", requireDomainScope("files"), remoteLimiter, filesRouter);
+  customer.use("/servers", requireDomainScope("servers"), connectionLimiter, serversRouter);
+  customer.use("/transfers", requireDomainScope("transfers"), remoteLimiter, transfersRouter);
+  customer.use("/backups", requireDomainScope("backups"), remoteLimiter, backupsRouter);
+  customer.use("/deployments", requireDomainScope("deployments"), remoteLimiter, deploymentsRouter);
   customer.use("/automations", automationsRouter);
   customer.use("/monitoring", requireScope("monitoring:read"), monitoringRouter);
   customer.use("/activity", requireScope("activity:read"), activityRouter);
@@ -95,7 +95,7 @@ export function createApp() {
   customer.use("/billing", billingRouter);
   customer.use("/integrations", integrationsRouter);
   customer.use("/runbooks", runbooksRouter);
-  customer.use("/terminal", terminalRouter);
+  customer.use("/terminal", connectionLimiter, terminalRouter);
   const admin = Router();
   admin.use(authenticate, requirePlatformAdmin);
   admin.use(adminRouter);
