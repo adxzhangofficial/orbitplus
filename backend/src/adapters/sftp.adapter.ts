@@ -6,6 +6,17 @@ import type { ConnectionHealth, RemoteEntry, RemoteFilesystem, ServerConnectionR
 import { joinRemoteRoot, normalizeRemotePath } from "./path-policy.js";
 import { AppError, badRequest } from "../lib/errors.js";
 import { resolveAllowedSftpAddress } from "./egress-policy.js";
+import { EMPTY_METRICS, metricsCommand, parseMetrics, type HostMetrics } from "./host-metrics.js";
+
+/** The parts of the ssh2 Client and its exec stream this adapter touches. */
+interface MetricsStream {
+  on(event: string, listener: (...args: never[]) => void): void;
+  stderr?: { on(event: string, listener: (...args: never[]) => void): void };
+  destroy(): void;
+}
+interface SshClient {
+  exec(command: string, callback: (error: Error | undefined, stream: MetricsStream) => void): void;
+}
 
 export class SftpAdapter implements RemoteFilesystem {
   private readonly client = new SftpClient("orbit-sftp");
@@ -113,6 +124,51 @@ export class SftpAdapter implements RemoteFilesystem {
     const started = Date.now();
     await this.client.stat(this.mapped("/"));
     return { ok: true, latencyMs: Date.now() - started, message: "SFTP connection is online and fingerprint verified" };
+  }
+
+  /**
+   * Reads CPU, memory, and disk over the SSH transport this SFTP session is
+   * already using.
+   *
+   * Returns nulls rather than throwing when the host will not answer: a server
+   * that refuses exec, runs a restricted shell, or is not Linux is still a
+   * perfectly healthy server, and a failure here must not turn a working
+   * connection into an outage in the sweep that calls it.
+   */
+  async metrics(): Promise<HostMetrics> {
+    const ssh = (this.client as unknown as { client?: SshClient }).client;
+    if (!ssh || typeof ssh.exec !== "function") return { ...EMPTY_METRICS };
+
+    const command = metricsCommand(this.server.root_path || "/");
+
+    try {
+      const output = await new Promise<string>((resolve, reject) => {
+        // The command sleeps for a second by design; this bounds everything
+        // else so a wedged host cannot hold the sweep open.
+        const timer = setTimeout(() => reject(new Error("Metrics command timed out")), 15_000);
+        ssh.exec(command, (error: Error | undefined, stream: MetricsStream) => {
+          if (error) { clearTimeout(timer); reject(error); return; }
+          let stdout = "";
+          stream.on("data", (chunk: Buffer) => {
+            stdout += chunk.toString("utf8");
+            // A misbehaving host must not be able to grow this without bound.
+            if (stdout.length > 64_000) {
+              clearTimeout(timer);
+              stream.destroy();
+              resolve(stdout);
+            }
+          });
+          // stderr is drained but ignored: the command guards every read, so
+          // anything here is noise from a shell profile, not a result.
+          stream.stderr?.on("data", () => undefined);
+          stream.on("close", () => { clearTimeout(timer); resolve(stdout); });
+          stream.on("error", (streamError: Error) => { clearTimeout(timer); reject(streamError); });
+        });
+      });
+      return parseMetrics(output);
+    } catch {
+      return { ...EMPTY_METRICS };
+    }
   }
 
   async list(remotePath: string): Promise<RemoteEntry[]> {

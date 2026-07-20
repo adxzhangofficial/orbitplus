@@ -1,4 +1,5 @@
 import { withAdapter } from "../adapters/index.js";
+import { EMPTY_METRICS } from "../adapters/host-metrics.js";
 import { breakerFor } from "../adapters/connection-pool.js";
 import { pool } from "../database/pool.js";
 // Aliased because `dispatchEvent` is also a global in the DOM lib, and an
@@ -19,6 +20,15 @@ import { pruneExpiredVersions } from "../services/file.service.js";
  * are already known to be unreachable, and probing them would spend the whole
  * sweep waiting out connect timeouts.
  */
+/** Bytes as a person reads them, for the service line beside a percentage. */
+function formatBytes(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "unknown";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const exponent = value <= 0 ? 0 : Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  const scaled = value / 1024 ** exponent;
+  return `${exponent === 0 ? scaled : scaled.toFixed(1)} ${units[exponent]}`;
+}
+
 export async function runHealthSweep(): Promise<{ probed: number; skipped: number; failed: number }> {
   const servers = await pool.query<{
     id: string; organization_id: string; name: string; adapter_mode: string;
@@ -49,11 +59,21 @@ export async function runHealthSweep(): Promise<{ probed: number; skipped: numbe
     let ok = false;
     let latencyMs = 0;
     let message = "";
+    let metrics = { ...EMPTY_METRICS };
     try {
-      const health = await withAdapter(record, (adapter) => adapter.health());
-      ok = health.ok;
-      latencyMs = health.latencyMs || Date.now() - started;
-      message = health.message;
+      // Both readings share one pooled connection, so measuring the host costs
+      // no extra handshake.
+      const result = await withAdapter(record, async (adapter) => {
+        const health = await adapter.health();
+        const sample = "metrics" in adapter && typeof adapter.metrics === "function"
+          ? await adapter.metrics()
+          : { ...EMPTY_METRICS };
+        return { health, sample };
+      });
+      ok = result.health.ok;
+      latencyMs = result.health.latencyMs || Date.now() - started;
+      message = result.health.message;
+      metrics = result.sample;
       probed += 1;
     } catch (error) {
       message = error instanceof Error ? error.message : "Probe failed";
@@ -61,12 +81,34 @@ export async function runHealthSweep(): Promise<{ probed: number; skipped: numbe
     }
 
     await pool.query(
-      `INSERT INTO monitors(organization_id, server_id, status, latency_ms, services, source)
-       VALUES($1, $2, $3, $4, $5::jsonb, 'probe')`,
+      `INSERT INTO monitors(organization_id, server_id, status, cpu_percent, memory_percent, disk_percent, latency_ms, services, source)
+       VALUES($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
       [
         row.organization_id, row.id, ok ? "healthy" : "critical",
+        metrics.cpuPercent, metrics.memoryPercent, metrics.diskPercent,
         ok ? latencyMs : null,
-        JSON.stringify([{ name: "sftp", status: ok ? "up" : "down", message: message.slice(0, 300) }]),
+        JSON.stringify([
+          { name: "sftp", status: ok ? "up" : "down", message: message.slice(0, 300) },
+          // Recorded alongside the percentages so the interface can show what a
+          // percentage is a percentage of, which is the number people act on.
+          ...(metrics.memoryTotalBytes === null ? [] : [{
+            name: "memory", status: "up",
+            message: `${formatBytes(metrics.memoryUsedBytes)} of ${formatBytes(metrics.memoryTotalBytes)}`,
+          }]),
+          ...(metrics.diskTotalBytes === null ? [] : [{
+            name: "disk", status: "up",
+            message: `${formatBytes(metrics.diskUsedBytes)} of ${formatBytes(metrics.diskTotalBytes)}`,
+          }]),
+          ...(metrics.loadAverage === null ? [] : [{
+            name: "load", status: "up", message: metrics.loadAverage.join(", "),
+          }]),
+          ...(metrics.uptimeSeconds === null ? [] : [{
+            name: "uptime", status: "up", message: `${Math.floor(metrics.uptimeSeconds / 86_400)}d`,
+          }]),
+        ]),
+        // A reading taken over SSH is not the same claim as one an agent
+        // pushed, and the interface should be able to tell them apart.
+        metrics.cpuPercent === null ? "probe" : "ssh",
       ],
     );
     // Compared against the stored status so only a transition is announced.

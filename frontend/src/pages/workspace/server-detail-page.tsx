@@ -32,6 +32,7 @@ import { Badge, Button, Progress, StatusBadge } from "@/components/ui";
 import { AgentPanel } from "@/components/agent-panel";
 import { api } from "@/lib/api";
 import type { ActivityEvent as ActivityRecord, Backup, Deployment, Server, Transfer } from "@/types";
+import { cn, formatBytes, relativeTime } from "@/lib/utils";
 
 // Sections without a per-server endpoint render empty rather than borrowing
 // another server's records. Typed so the panels below still compile against
@@ -40,8 +41,9 @@ const activities: ActivityRecord[] = [];
 const backups: Backup[] = [];
 const deployments: Deployment[] = [];
 const transfers: Transfer[] = [];
-const metrics: Array<{ time: string; cpu: number; memory: number; network: number }> = [];
-import { cn, formatBytes, relativeTime } from "@/lib/utils";
+
+/** One bucketed sample from the monitoring history endpoint. */
+interface HistoryPoint { at: string; cpu: number | null; memory: number | null; disk: number | null; latencyMs: number | null; samples: number }
 
 export function ServerDetailPage() {
   const { serverId = "" } = useParams();
@@ -88,6 +90,7 @@ function ServerDetail({ server }: { server: Server }) {
     cpu: null, memory: null, disk: null, latency: null,
     status: null, sampledAt: null, source: null, transfers: 0,
   });
+  const [history, setHistory] = useState<HistoryPoint[]>([]);
 
   /**
    * Polls while the page is open so the readings track the background health
@@ -115,8 +118,17 @@ function ServerDetail({ server }: { server: Server }) {
         });
       } catch { /* a failed poll leaves the previous reading on screen */ }
     };
+    const loadHistory = async () => {
+      try {
+        const points = await api.get<HistoryPoint[]>(
+          `/monitoring/${server.id}/history?hours=24&buckets=48`,
+        );
+        if (active) setHistory(points);
+      } catch { /* the chart keeps whatever it last drew */ }
+    };
     void load();
-    const timer = setInterval(load, 15_000);
+    void loadHistory();
+    const timer = setInterval(() => { void load(); void loadHistory(); }, 15_000);
     return () => { active = false; clearInterval(timer); };
   }, [server.id]);
   // Real filenames from the indexed tree. This panel previously listed four
@@ -143,7 +155,18 @@ function ServerDetail({ server }: { server: Server }) {
     { label: "Monitoring", to: "/workspace/monitoring" },
     { label: "Activity", to: "/workspace/activity" },
   ];
-  const chartData = useMemo(() => metrics.map((item) => ({ ...item, cpu: Math.max(0, Math.min(100, item.cpu + ((server.cpu ?? 0) - 38) / 3)) })), [server.cpu]);
+  // Real samples from the sweep. This was previously an empty array put through
+  // a hardcoded baseline, so the chart drew either nothing or a shape that had
+  // no relationship to the server.
+  const chartData = useMemo(
+    () => history.map((point) => ({
+      time: new Date(point.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      cpu: point.cpu,
+      memory: point.memory,
+      network: point.latencyMs,
+    })),
+    [history],
+  );
   return (
     <>
       <header className="border-b border-border"><div className="mx-auto max-w-[1500px] px-4 pb-0 pt-5 sm:px-6 md:px-8"><div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center"><div className="flex min-w-0 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-card text-muted-foreground"><ServerIcon className="size-4.5" /></span><div className="min-w-0"><div className="flex items-center gap-2"><h1 className="truncate text-xl font-semibold">{server.name}</h1><StatusBadge status={connected ? server.status : "offline"} /></div><p className="mt-1 truncate font-mono text-[9px] text-muted-foreground">{server.username}@{server.host}:{server.port} · {server.rootPath}</p></div></div><div className="flex flex-wrap gap-2 lg:ml-auto"><Button variant="ghost" size="icon" onClick={() => setStarred((value) => !value)} title="Favorite"><Star className={starred ? "fill-amber-300 text-amber-300" : ""} /></Button><Button variant="outline" onClick={() => void navigator.clipboard.writeText(server.host).then(() => toast.success("Hostname copied"))}><Copy />Copy host</Button><Link to={`/workspace/terminal?server=${server.id}`}><Button variant="outline"><Terminal />Terminal</Button></Link><Button variant={connected ? "danger" : "primary"} onClick={() => { setConnected((value) => !value); toast.success(connected ? "Server disconnected" : "Connection established"); }}>{connected ? <><Unplug />Disconnect</> : <><Zap />Connect</>}</Button><Button variant="ghost" size="icon"><MoreHorizontal /></Button></div></div><nav className="flex min-w-0 gap-1 overflow-x-auto" aria-label="Server sections">{tabs.map((tab) => <NavLink key={tab.label} to={tab.to} end={tab.end} className={({ isActive }) => cn("relative flex h-9 shrink-0 items-center px-3 text-[10px] text-muted-foreground hover:text-foreground", isActive && "text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-px after:bg-white")}>{tab.label}</NavLink>)}</nav></div></header>
