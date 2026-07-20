@@ -7,11 +7,23 @@ interface AuthContextValue {
   loading: boolean;
   isAuthenticated: boolean;
   isPlatformAdmin: boolean;
-  signIn: (email: string, password: string) => Promise<User>;
+  /**
+   * Signs in, or reports that a second factor is required.
+   *
+   * Returns a discriminated result rather than a User, because a correct
+   * password no longer implies a session. The caller has to handle both.
+   */
+  signIn: (email: string, password: string) => Promise<SignInOutcome>;
+  /** Completes a sign-in that stopped for a second factor. */
+  completeMfa: (challengeToken: string, code: string) => Promise<User>;
   register: (input: { name: string; email: string; password: string; organizationName: string }) => Promise<User>;
   signOut: () => Promise<void>;
   updateUser: (changes: Partial<User>) => void;
 }
+
+export type SignInOutcome =
+  | { mfaRequired: true; challengeToken: string }
+  | { mfaRequired: false; user: User };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
@@ -72,13 +84,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { active = false; };
   }, []);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    const result = await api.auth.login(email, password);
+  /** Stores a completed session. Shared by password-only and second-factor paths. */
+  const adopt = useCallback((result: { accessToken: string; user: User }) => {
     api.setAccessToken(result.accessToken);
     localStorage.setItem(SESSION_KEY, JSON.stringify(result.user));
     setUser(result.user);
     return result.user;
   }, []);
+
+  const signIn = useCallback(async (email: string, password: string): Promise<SignInOutcome> => {
+    const result = await api.auth.login(email, password);
+    // Nothing is stored on a challenge: there is no session yet, and writing a
+    // partial one would leave the app looking signed in when it is not.
+    if (result.mfaRequired) return { mfaRequired: true, challengeToken: result.challengeToken };
+    return { mfaRequired: false, user: adopt(result) };
+  }, [adopt]);
+
+  const completeMfa = useCallback(async (challengeToken: string, code: string) => {
+    return adopt(await api.auth.verifyMfa(challengeToken, code));
+  }, [adopt]);
 
   const register = useCallback(async (input: { name: string; email: string; password: string; organizationName: string }) => {
     const result = await api.auth.register(input);
@@ -109,10 +133,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: Boolean(user),
     isPlatformAdmin: user?.role === "platform_admin",
     signIn,
+    completeMfa,
     register,
     signOut,
     updateUser,
-  }), [user, loading, signIn, register, signOut, updateUser]);
+  }), [user, loading, signIn, completeMfa, register, signOut, updateUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -194,7 +194,44 @@ export const api = {
   setAccessToken,
   clearSession,
   auth: {
-    login: async (email: string, password: string) => normalizeAuth(await request<BackendAuthPayload>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }), headers: { "content-type": "application/json" } })),
+    /**
+     * Signs in, or reports that a second factor is required.
+     *
+     * A correct password no longer implies a session: when two-factor is
+     * enrolled the API returns a challenge token instead, and the caller has to
+     * complete it. Modelled as a union so a caller cannot read `user` off a
+     * response that does not have one.
+     */
+    login: async (email: string, password: string): Promise<SignInResult> => {
+      const payload = await request<BackendAuthPayload & { mfaRequired?: boolean; challengeToken?: string }>(
+        "/auth/login",
+        { method: "POST", body: JSON.stringify({ email, password }), headers: { "content-type": "application/json" } },
+      );
+      if (payload.mfaRequired && payload.challengeToken) {
+        return { mfaRequired: true, challengeToken: payload.challengeToken };
+      }
+      return { mfaRequired: false, ...normalizeAuth(payload) };
+    },
+
+    /** Completes a sign-in that stopped for a second factor. */
+    verifyMfa: async (challengeToken: string, code: string) => {
+      const payload = await request<BackendAuthPayload & { usedRecoveryCode?: boolean; remainingRecoveryCodes?: number }>(
+        "/auth/mfa/verify",
+        { method: "POST", body: JSON.stringify({ challengeToken, code }), headers: { "content-type": "application/json" } },
+      );
+      return {
+        ...normalizeAuth(payload),
+        usedRecoveryCode: payload.usedRecoveryCode ?? false,
+        remainingRecoveryCodes: payload.remainingRecoveryCodes ?? null,
+      };
+    },
+
+    mfaStatus: () => request<{ enabled: boolean; enrolledAt: string | null; remainingRecoveryCodes: number }>("/auth/mfa"),
+    beginMfaEnrolment: () => request<{ secret: string; otpauthUri: string }>("/auth/mfa/enrol", { method: "POST", body: "{}", headers: { "content-type": "application/json" } }),
+    enableMfa: (code: string) => request<{ enabled: boolean; recoveryCodes: string[] }>("/auth/mfa/enable", { method: "POST", body: JSON.stringify({ code }), headers: { "content-type": "application/json" } }),
+    disableMfa: (password: string, code: string) => request<{ enabled: boolean }>("/auth/mfa/disable", { method: "POST", body: JSON.stringify({ password, code }), headers: { "content-type": "application/json" } }),
+    regenerateRecoveryCodes: (code: string) => request<{ recoveryCodes: string[] }>("/auth/mfa/recovery-codes", { method: "POST", body: JSON.stringify({ code }), headers: { "content-type": "application/json" } }),
+
     register: async (input: { name: string; email: string; password: string; organizationName: string }) => normalizeAuth(await request<BackendAuthPayload>("/auth/register", { method: "POST", body: JSON.stringify(input), headers: { "content-type": "application/json" } })),
     me: async () => normalizeAuth(await request<BackendAuthPayload>("/auth/me")).user,
     logout: () =>
@@ -248,6 +285,10 @@ interface BackendAuthPayload {
   };
   organizations?: BackendOrganization[];
 }
+
+export type SignInResult =
+  | { mfaRequired: true; challengeToken: string }
+  | { mfaRequired: false; accessToken: string; user: User };
 
 function normalizeAuth(payload: BackendAuthPayload): { accessToken: string; user: User } {
   const organization = payload.organizations?.[0];

@@ -1,9 +1,10 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Laptop, ShieldCheck, Trash2 } from "lucide-react";
+import { Laptop, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api, type SessionSummary } from "@/lib/api";
 import { relativeTime } from "@/lib/utils";
 import { buttonClass, controlClass, IconButton, PageHeader, Panel, StatusBadge, pageContainerClass } from "./_shared";
+import { MfaPanel } from "./_mfa-panel";
 
 /**
  * Account protection.
@@ -13,9 +14,9 @@ import { buttonClass, controlClass, IconButton, PageHeader, Panel, StatusBadge, 
  * have believed their account was protected by a second factor when it was not,
  * which is worse than the feature being absent.
  *
- * Password changes and session revocation are real. Enrolment for MFA and
- * account-level SSH keys is not built, and the page says so rather than
- * simulating it.
+ * Password changes, session revocation, and two-factor enrolment are real.
+ * Account-level SSH keys are still not built, and the page says so rather than
+ * simulating them.
  */
 
 function deviceLabel(userAgent: string | null): string {
@@ -115,20 +116,7 @@ export function SecuritySettingsPage() {
         </form>
       </Panel>
 
-      <Panel title="Additional protection" description="Not yet available">
-        <div className="space-y-3 text-[10px] leading-5 text-zinc-500">
-          <p className="flex items-start gap-2">
-            <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-zinc-600" />
-            Multi-factor authentication and account-level SSH keys are not built yet. This page
-            will not offer a toggle that enrols nothing, because believing an account is protected
-            when it is not is worse than knowing it is not.
-          </p>
-          <p className="text-zinc-600">
-            Sessions expire on their own, a password change signs out every other device, and
-            server credentials are encrypted at rest.
-          </p>
-        </div>
-      </Panel>
+      <MfaPanel />
     </div>
 
     <Panel

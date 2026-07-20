@@ -6,7 +6,8 @@ import { env } from "../config/env.js";
 import { pool } from "../database/pool.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { badRequest, conflict, notFound, unauthorized } from "../lib/errors.js";
-import { signAccessToken } from "../lib/jwt.js";
+import { signAccessToken, signChallengeToken, verifyChallengeToken } from "../lib/jwt.js";
+import * as mfa from "../services/mfa.service.js";
 import { routeParam } from "../lib/route-param.js";
 import { authenticate } from "../middleware/auth.js";
 import { consumeAuthToken, issueAuthToken } from "../services/auth-token.service.js";
@@ -148,8 +149,9 @@ authRouter.post(
       platform_role: "user" | "admin";
       active: boolean;
       email_verified: boolean;
+      mfa_enabled: boolean;
     }>(
-      `SELECT id, email, name, password_hash, platform_role, active, email_verified
+      `SELECT id, email, name, password_hash, platform_role, active, email_verified, mfa_enabled
          FROM users WHERE lower(email) = $1`,
       [input.email],
     );
@@ -157,6 +159,16 @@ authRouter.post(
     if (!user || !user.active || !(await bcrypt.compare(input.password, user.password_hash))) {
       throw unauthorized("Email or password is incorrect");
     }
+
+    // A correct password is not a session when a second factor is enrolled.
+    // The challenge token proves only that this step passed: it carries no role
+    // and no email, has its own audience, and cannot be presented anywhere an
+    // access token is expected.
+    if (user.mfa_enabled) {
+      response.json({ data: { mfaRequired: true, challengeToken: signChallengeToken(user.id) } });
+      return;
+    }
+
     await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [user.id]);
     const token = signAccessToken({ sub: user.id, email: user.email, platformRole: user.platform_role });
     const refreshToken = await createSession(user.id, request);
@@ -347,5 +359,122 @@ authRouter.post(
     const refreshToken = typeof request.body?.refreshToken === "string" ? request.body.refreshToken : undefined;
     if (refreshToken) await revokeSession(refreshToken);
     response.status(204).send();
+  }),
+);
+
+/* --------------------------------------------------------------------------
+ * Two-factor authentication
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Completes a sign-in that stopped for a second factor.
+ *
+ * The challenge token is what proves the password step already passed, so this
+ * route never sees a password and cannot be used to guess one. Rate limiting on
+ * /auth applies here too, which is what bounds guessing a six-digit code.
+ */
+authRouter.post(
+  "/mfa/verify",
+  asyncHandler(async (request, response) => {
+    const input = z.object({
+      challengeToken: z.string().min(10),
+      code: z.string().trim().min(6).max(20),
+    }).parse(request.body);
+
+    const claims = verifyChallengeToken(input.challengeToken);
+    const outcome = await mfa.verifyChallenge(claims.sub, input.code);
+    if (!outcome.ok) throw unauthorized("That code is not valid");
+
+    const result = await pool.query<{
+      id: string; email: string; name: string; platform_role: "user" | "admin";
+      active: boolean; email_verified: boolean;
+    }>(
+      "SELECT id, email, name, platform_role, active, email_verified FROM users WHERE id = $1",
+      [claims.sub],
+    );
+    const user = result.rows[0];
+    if (!user?.active) throw unauthorized("This account is unavailable");
+
+    await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [user.id]);
+    const token = signAccessToken({ sub: user.id, email: user.email, platformRole: user.platform_role });
+    const refreshToken = await createSession(user.id, request);
+
+    response.json({
+      data: {
+        token,
+        refreshToken,
+        user: {
+          id: user.id, email: user.email, name: user.name,
+          platformRole: user.platform_role, emailVerified: user.email_verified,
+        },
+        organizations: await organizationsForUser(user.id),
+        // Surfaced so the interface can prompt for a fresh set before someone
+        // runs out and locks themselves out.
+        ...(outcome.usedRecoveryCode
+          ? { usedRecoveryCode: true, remainingRecoveryCodes: outcome.remainingRecoveryCodes }
+          : {}),
+      },
+    });
+  }),
+);
+
+authRouter.post(
+  "/mfa/enrol",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const result = await mfa.beginEnrolment(request.auth!.userId, request.auth!.email);
+    response.json({ data: result });
+  }),
+);
+
+authRouter.post(
+  "/mfa/enable",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const input = z.object({ code: z.string().trim().min(6).max(10) }).parse(request.body);
+    const recoveryCodes = await mfa.completeEnrolment(request.auth!.userId, input.code);
+    // Returned once and never readable again; they are stored hashed.
+    response.json({ data: { enabled: true, recoveryCodes } });
+  }),
+);
+
+authRouter.post(
+  "/mfa/disable",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const input = z.object({
+      password: z.string().min(1),
+      code: z.string().trim().min(6).max(20),
+    }).parse(request.body);
+    await mfa.disable(request.auth!.userId, input.password, input.code);
+    response.json({ data: { enabled: false } });
+  }),
+);
+
+authRouter.post(
+  "/mfa/recovery-codes",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const input = z.object({ code: z.string().trim().min(6).max(20) }).parse(request.body);
+    const recoveryCodes = await mfa.regenerateRecoveryCodes(request.auth!.userId, input.code);
+    response.json({ data: { recoveryCodes } });
+  }),
+);
+
+authRouter.get(
+  "/mfa",
+  authenticate,
+  asyncHandler(async (request, response) => {
+    const result = await pool.query<{ mfa_enabled: boolean; mfa_enrolled_at: Date | null }>(
+      "SELECT mfa_enabled, mfa_enrolled_at FROM users WHERE id = $1",
+      [request.auth!.userId],
+    );
+    response.json({
+      data: {
+        enabled: result.rows[0]?.mfa_enabled ?? false,
+        enrolledAt: result.rows[0]?.mfa_enrolled_at ?? null,
+        remainingRecoveryCodes: await mfa.countRecoveryCodes(request.auth!.userId),
+      },
+    });
   }),
 );
