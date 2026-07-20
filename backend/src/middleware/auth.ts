@@ -184,3 +184,34 @@ export function requireScope(scope: string): RequestHandler {
     next();
   };
 }
+
+/** Methods that change something, and therefore need the write scope. */
+const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * Requires read or write on a domain according to what the request does.
+ *
+ * Applied where a router is mounted rather than on each route, because the
+ * failure this fixes was a scope being enforced in one place and forgotten in
+ * another: every write route under /files was reachable with a files:read key,
+ * which made "read-only key" untrue in the one direction that matters.
+ *
+ * Deriving the requirement from the HTTP method means a route added later is
+ * covered the day it is written, and it fails closed — an unrecognised method
+ * is treated as a write.
+ */
+export function requireDomainScope(domain: string): RequestHandler {
+  return (request, _response, next) => {
+    if (!request.auth) throw unauthorized();
+    if (!request.auth.apiKeyId) { next(); return; }
+
+    const needed = MUTATING.has(request.method) || !["GET", "HEAD", "OPTIONS"].includes(request.method)
+      ? `${domain}:write`
+      : `${domain}:read`;
+
+    if (!request.auth.scopes?.includes(needed)) {
+      throw forbidden(`This API key does not carry the ${needed} scope`);
+    }
+    next();
+  };
+}

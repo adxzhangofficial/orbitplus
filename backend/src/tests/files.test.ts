@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createHash } from "node:crypto";
 import type { Express } from "express";
 import type { Pool } from "pg";
 import request from "supertest";
@@ -49,10 +50,19 @@ afterAll(async () => {
   if (closePool) await closePool();
 });
 
-async function blobCount(): Promise<number> {
+/**
+ * Blobs holding one exact payload.
+ *
+ * Counting every blob in the organization made this suite depend on nothing
+ * else writing at the same time, which is not true — vitest runs test files in
+ * parallel. Counting by checksum measures the deduplication property itself
+ * and is unaffected by what any other test is doing.
+ */
+async function blobCountForContent(content: string): Promise<number> {
+  const checksum = createHash("sha256").update(Buffer.from(content, "utf8")).digest("hex");
   const result = await databasePool.query<{ count: string }>(
-    "SELECT count(*) FROM file_blobs WHERE organization_id = $1",
-    [organizationId],
+    "SELECT count(*) FROM file_blobs WHERE organization_id = $1 AND checksum = $2",
+    [organizationId, checksum],
   );
   return Number(result.rows[0]!.count);
 }
@@ -62,7 +72,7 @@ describe("Content-addressed version storage", () => {
     const path = `/dedupe-${Date.now()}.txt`;
     const content = `stable contents ${Date.now()}`;
 
-    const before = await blobCount();
+    expect(await blobCountForContent(content)).toBe(0);
 
     // Ten writes of identical bytes.
     for (let index = 0; index < 10; index += 1) {
@@ -73,23 +83,25 @@ describe("Content-addressed version storage", () => {
     const versions = await customer("get", `/api/v1/servers/${serverId}/files/versions?path=${encodeURIComponent(path)}`);
     expect(versions.body.data.length).toBeGreaterThanOrEqual(10);
 
-    // One new distinct payload, despite ten or more version rows.
-    expect(await blobCount()).toBe(before + 1);
+    // One stored payload, despite ten or more version rows referencing it.
+    expect(await blobCountForContent(content)).toBe(1);
   });
 
   it("stores a separate payload for each distinct content", async () => {
     const path = `/distinct-${Date.now()}.txt`;
-    const before = await blobCount();
+    const run = `${Date.now()}-${Math.random()}`;
+    const contents = [0, 1, 2].map((index) => `revision number ${index} ${run}`);
 
-    for (let index = 0; index < 3; index += 1) {
-      const write = await customer("put", `/api/v1/servers/${serverId}/files/content`).send({
-        path,
-        content: `revision number ${index} ${Date.now()}`,
-      });
+    for (const content of contents) {
+      const write = await customer("put", `/api/v1/servers/${serverId}/files/content`).send({ path, content });
       expect(write.status).toBe(200);
     }
 
-    expect(await blobCount()).toBe(before + 3);
+    // Each distinct payload stored exactly once. Counted per checksum so a
+    // concurrent test writing its own files cannot change the result.
+    for (const content of contents) {
+      expect(await blobCountForContent(content)).toBe(1);
+    }
   });
 
   it("round-trips content through a version and restores it on rollback", async () => {
