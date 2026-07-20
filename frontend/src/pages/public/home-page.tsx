@@ -3,15 +3,11 @@ import {
   Activity,
   ArrowRight,
   ArchiveRestore,
-  Bot,
   Check,
   ChevronRight,
-  CircleCheck,
   CloudUpload,
   Code2,
   FileCode2,
-  Folder,
-  Gauge,
   GitBranch,
   KeyRound,
   LockKeyhole,
@@ -25,51 +21,10 @@ import {
   Zap,
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { Button, Progress, StatusBadge } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { CheckList, Eyebrow, MarketingCTA, SectionHeading } from "@/components/marketing";
+import { ProductDemo } from "@/components/product-demo";
 import { cn } from "@/lib/utils";
-
-function ProductWindow() {
-  const [activeServer, setActiveServer] = useState(0);
-  const [connected, setConnected] = useState(true);
-  const demoServers = [
-    { name: "Production API", host: "api-01.acme.internal", status: "online", cpu: 38, memory: 64, region: "Virginia" },
-    { name: "Frontend Cluster", host: "web-01.acme.internal", status: "online", cpu: 22, memory: 51, region: "Ireland" },
-    { name: "Staging", host: "staging.acme.internal", status: "degraded", cpu: 81, memory: 74, region: "Oregon" },
-  ];
-  const server = demoServers[activeServer];
-  return (
-    <div className="relative mx-auto mt-14 max-w-6xl px-2 sm:px-6">
-      <div className="absolute -inset-12 -z-10 bg-[radial-gradient(circle_at_50%_0%,rgba(74,96,210,.18),transparent_55%)] blur-2xl" />
-      <div className="overflow-hidden rounded-xl border border-white/12 bg-[#0d0e11] shadow-2xl shadow-black/70">
-        <header className="flex h-10 items-center gap-3 border-b border-white/8 px-3"><div className="flex gap-1.5"><span className="size-2.5 rounded-full bg-red-400/70" /><span className="size-2.5 rounded-full bg-amber-400/70" /><span className="size-2.5 rounded-full bg-emerald-400/70" /></div><div className="mx-auto flex h-6 w-56 items-center justify-center rounded-md bg-white/[0.035] text-[8px] text-zinc-600">app.orbit.dev/workspace</div><div className="w-10" /></header>
-        <div className="grid min-h-[500px] grid-cols-[156px_minmax(0,1fr)] sm:grid-cols-[200px_minmax(0,1fr)]">
-          <aside className="border-r border-white/8 bg-[#141517] p-2.5">
-            <div className="flex h-8 items-center gap-2 px-2"><span className="grid size-5 place-items-center rounded bg-zinc-100 text-black"><RefreshCw className="size-3" /></span><span className="font-heading text-[11px] font-semibold">Orbit<span className="text-blue-400">+</span></span></div>
-            <p className="mb-1 mt-4 px-2 text-[7px] uppercase tracking-wider text-zinc-600">Workspace</p>
-            {[{ icon: Gauge, label: "Overview" }, { icon: Server, label: "Servers", active: true }, { icon: CloudUpload, label: "Transfers" }, { icon: Rocket, label: "Deployments" }, { icon: ArchiveRestore, label: "Backups" }, { icon: Terminal, label: "Terminal" }].map((item) => <div key={item.label} className={cn("flex h-7 items-center gap-2 rounded px-2 text-[8px]", item.active ? "bg-zinc-800 text-white" : "text-zinc-600")}><item.icon className="size-3" />{item.label}</div>)}
-            <p className="mb-1 mt-4 px-2 text-[7px] uppercase tracking-wider text-zinc-600">Servers</p>
-            {demoServers.map((item, index) => <button type="button" key={item.name} onClick={() => { setActiveServer(index); setConnected(true); }} className={cn("flex h-8 w-full items-center gap-2 rounded px-2 text-left text-[8px]", index === activeServer ? "bg-white/[0.055] text-zinc-200" : "text-zinc-600 hover:bg-white/[0.03]")}><span className={cn("size-1.5 rounded-full", item.status === "online" ? "bg-emerald-400" : "bg-amber-400")} /><span className="truncate">{item.name}</span></button>)}
-          </aside>
-          <main className="min-w-0">
-            <header className="flex min-h-16 items-center justify-between gap-3 border-b border-white/8 px-4 sm:px-6"><div><h3 className="text-sm font-semibold">{server.name}</h3><p className="mt-0.5 hidden text-[8px] text-zinc-600 sm:block">{server.host} · SFTP · {server.region}</p></div><div className="flex items-center gap-2"><StatusBadge status={connected ? server.status : "offline"} /><button type="button" onClick={() => setConnected((value) => !value)} className="hidden h-7 rounded border border-white/10 px-2 text-[8px] text-zinc-400 hover:bg-white/5 sm:block">{connected ? "Disconnect" : "Connect"}</button></div></header>
-            <div className="p-3 sm:p-5">
-              <div className="grid grid-cols-2 border-y border-white/8 lg:grid-cols-4">
-                {[{ label: "CPU load", value: `${connected ? server.cpu : 0}%`, icon: Activity }, { label: "Memory", value: `${connected ? server.memory : 0}%`, icon: Gauge }, { label: "Latency", value: connected ? "31 ms" : "—", icon: Zap }, { label: "Uptime", value: connected ? "99.997%" : "—", icon: CircleCheck }].map((metric, index) => <div key={metric.label} className={cn("p-3", index % 2 === 0 && "border-r", index < 2 && "border-b lg:border-b-0", index < 3 && "lg:border-r")}><div className="flex items-center gap-2 text-[7px] text-zinc-600"><metric.icon className="size-3" />{metric.label}</div><strong className="mt-2 block text-sm tabular-nums sm:text-lg">{metric.value}</strong></div>)}
-              </div>
-              <div className="mt-5 grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
-                <div><div className="mb-2 flex items-center justify-between"><div><p className="text-[9px] font-medium">Remote files</p><p className="mt-0.5 text-[7px] text-zinc-600">/var/www/api</p></div><span className="text-[7px] text-zinc-600">Modified 6m ago</span></div><div className="overflow-hidden border-y border-white/8">
-                  {[{ name: "src", type: "folder", meta: "8 items", changed: true }, { name: "public", type: "folder", meta: "24 items" }, { name: "docker-compose.yml", type: "file", meta: "3.1 KB", changed: true }, { name: "package.json", type: "file", meta: "2.2 KB" }, { name: "server.ts", type: "file", meta: "6.8 KB", changed: true }, { name: "README.md", type: "file", meta: "9.4 KB" }].map((file) => <div key={file.name} className="flex h-9 items-center gap-2.5 border-b border-white/[0.055] px-2 last:border-0 hover:bg-white/[0.025]"><span className="grid size-6 place-items-center rounded bg-white/[0.035] text-zinc-500">{file.type === "folder" ? <Folder className="size-3" /> : <FileCode2 className="size-3" />}</span><span className="min-w-0 flex-1 truncate text-[8px] text-zinc-300">{file.name}</span>{file.changed && <span className="size-1.5 rounded-full bg-blue-400" />}<span className="text-[7px] text-zinc-700">{file.meta}</span></div>)}
-                </div></div>
-                <aside><div className="mb-2"><p className="text-[9px] font-medium">Live health</p><p className="mt-0.5 text-[7px] text-zinc-600">Last 30 minutes</p></div><div className="rounded-md border border-white/8 bg-white/[0.018] p-3"><div className="flex h-24 items-end gap-1">{[34, 42, 38, 52, 48, 41, 57, 62, 55, 47, 43, 38, 44, 39, 36, 42, 38, 35, 41, 38].map((height, index) => <span key={index} className="min-w-0 flex-1 rounded-t-sm bg-blue-400/55" style={{ height: `${height}%` }} />)}</div><div className="mt-3 space-y-3"><div><div className="mb-1 flex justify-between text-[7px] text-zinc-600"><span>Memory</span><span>{server.memory}%</span></div><Progress value={server.memory} className="h-px" indicatorClassName="bg-zinc-400" /></div><div><div className="mb-1 flex justify-between text-[7px] text-zinc-600"><span>Disk</span><span>47%</span></div><Progress value={47} className="h-px" indicatorClassName="bg-zinc-400" /></div></div></div><div className="mt-3 flex items-center gap-2 rounded-md border border-emerald-400/10 bg-emerald-400/[0.035] p-2.5 text-[7px] text-emerald-300"><ShieldCheck className="size-3.5" />Host key verified · AES-256 encrypted</div></aside>
-              </div>
-            </div>
-          </main>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function HomePage() {
   const [typed, setTyped] = useState(0);
@@ -89,7 +44,7 @@ export function HomePage() {
           <div className="mt-8 flex flex-col justify-center gap-2 sm:flex-row"><Link to="/register"><Button size="lg">Start building free<ArrowRight /></Button></Link><Link to="/product"><Button size="lg" variant="outline">See how it works<ChevronRight /></Button></Link></div>
           <div className="mt-5 flex flex-wrap justify-center gap-x-5 gap-y-2 text-[9px] text-zinc-600"><span className="flex items-center gap-1.5"><Check className="size-3 text-emerald-400" />No credit card</span><span className="flex items-center gap-1.5"><Check className="size-3 text-emerald-400" />Two servers free</span><span className="flex items-center gap-1.5"><Check className="size-3 text-emerald-400" />Setup in 60 seconds</span></div>
         </div>
-        <ProductWindow />
+        <ProductDemo />
       </section>
 
       <section className="border-y border-white/8 px-4 py-8 sm:px-6 lg:px-8"><div className="mx-auto flex max-w-6xl flex-col items-center gap-6 lg:flex-row"><p className="shrink-0 text-[9px] uppercase tracking-[0.14em] text-zinc-700">Trusted where uptime matters</p><div className="grid w-full grid-cols-3 gap-6 text-center font-heading text-sm font-semibold text-zinc-600 sm:grid-cols-6"><span>Northstar</span><span>Vercelity</span><span>Acme</span><span>Juniper</span><span>Polaris</span><span>Monarch</span></div></div></section>
