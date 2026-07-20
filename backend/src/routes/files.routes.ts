@@ -14,7 +14,7 @@ import { requireRole } from "../middleware/auth.js";
 import { enforceFileLimit, moveVersionsForTenant, readOptional, readOptionalDeleteSnapshot, saveVersion, versionForTenant, writeVersioned } from "../services/file.service.js";
 import { serverForTenant } from "../services/server.service.js";
 import { invalidate, isFresh, listWithPrefetch, readCached } from "../services/directory-cache.js";
-import { invalidatePath, listFromIndex, markIndexStatus } from "../services/tree-index.service.js";
+import { indexEntry, invalidatePath, listFromIndex, markIndexStatus } from "../services/tree-index.service.js";
 import { enqueue, QUEUES } from "../queue/index.js";
 
 const pathQuery = z.object({ path: z.string().max(2048).default("/") });
@@ -211,7 +211,7 @@ filesRouter.put(
       note: input.note,
     }));
     invalidate(request.tenant!.organizationId, server.id, path);
-    await invalidatePath(server.id, path);
+    await indexEntry({ organizationId: request.tenant!.organizationId, serverId: server.id, path, type: "file", sizeBytes: content.length });
     response.json({ data: { path, size: content.length, checksum: version.checksum, versionId: version.id, versionNumber: version.versionNumber } });
   }),
 );
@@ -295,7 +295,17 @@ filesRouter.post(
     });
 
     invalidate(request.tenant!.organizationId, server.id, directory);
-    await invalidatePath(server.id, directory);
+    // Each uploaded file recorded individually. Invalidating the directory
+    // instead would drop the entries for everything already in it.
+    for (const file of results) {
+      await indexEntry({
+        organizationId: request.tenant!.organizationId,
+        serverId: server.id,
+        path: file.path,
+        type: "file",
+        sizeBytes: file.size,
+      });
+    }
     response.status(201).json({ data: results, meta: { directory, count: results.length } });
   }),
 );
@@ -334,7 +344,7 @@ filesRouter.post(
       return saveVersion({ organizationId: request.tenant!.organizationId, serverId: server.id, path: version.path, content: version.content, userId: request.auth!.userId, operation: "rollback", note: input.note ?? `Restored ${version.id}` });
     });
     invalidate(request.tenant!.organizationId, server.id, version.path);
-    await invalidatePath(server.id, version.path);
+    await indexEntry({ organizationId: request.tenant!.organizationId, serverId: server.id, path: version.path, type: "file", sizeBytes: version.content.length });
     response.json({ data: { path: version.path, restoredFromVersionId: version.id, checksum: restored.checksum, versionNumber: restored.versionNumber } });
   }),
 );
@@ -348,7 +358,7 @@ filesRouter.post(
     const server = await serverForTenant(request.tenant!.organizationId, routeParam(request, "serverId"));
     await withAdapter(server, (adapter) => adapter.mkdir(path));
     invalidate(request.tenant!.organizationId, server.id, path);
-    await invalidatePath(server.id, path);
+    await indexEntry({ organizationId: request.tenant!.organizationId, serverId: server.id, path, type: "directory" });
     response.status(201).json({ data: { path, type: "directory" } });
   }),
 );
@@ -376,6 +386,7 @@ filesRouter.post(
     await invalidatePath(server.id, from);
     invalidate(request.tenant!.organizationId, server.id, to);
     await invalidatePath(server.id, to);
+    await indexEntry({ organizationId: request.tenant!.organizationId, serverId: server.id, path: to, type: "file" });
     response.json({ data: { from, to } });
   }),
 );

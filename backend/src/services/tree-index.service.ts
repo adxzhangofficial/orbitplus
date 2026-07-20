@@ -303,10 +303,108 @@ export async function listFromIndex(serverId: string, path: string): Promise<Cac
   };
 }
 
-/** Applies a local mutation to the cache so the UI does not need a full rewalk. */
+/**
+ * Removes a path and everything beneath it from the index.
+ *
+ * Correct for a deletion, and correct as the first half of a rename. It is not
+ * sufficient on its own when something is created: see indexEntry.
+ */
 export async function invalidatePath(serverId: string, path: string): Promise<void> {
   await pool.query(
     "DELETE FROM remote_entries WHERE server_id = $1 AND (path = $2 OR left(path, length($2) + 1) = $2 || '/')",
     [serverId, path],
+  );
+}
+
+/** The directories above a path, roots first: /a/b/c.txt → ["/a", "/a/b"]. */
+function ancestorsOf(path: string): string[] {
+  const segments = path.split("/").filter(Boolean);
+  segments.pop();
+  const ancestors: string[] = [];
+  let current = "";
+  for (const segment of segments) {
+    current += `/${segment}`;
+    ancestors.push(current);
+  }
+  return ancestors;
+}
+
+function parentOf(path: string): string {
+  const parent = path.split("/").slice(0, -1).join("/");
+  return parent || "/";
+}
+
+/**
+ * Records something that now exists, so a listing served from the index shows it.
+ *
+ * Deleting the changed path was enough for a removal but silently wrong for a
+ * creation: the index kept answering from the last full walk, so a file written
+ * a second ago was invisible and a file deleted last week was still listed.
+ * Because listFromIndex returns rows rather than null whenever the run is
+ * ready, that stale answer was served indefinitely and never fell through to
+ * the live server.
+ *
+ * Updating in place rather than invalidating the parent is deliberate: dropping
+ * the parent's children would make a populated directory report itself as
+ * empty, which is a worse lie than being briefly out of date.
+ *
+ * Ancestors are created as needed, so a write into a directory the walk never
+ * reached does not leave an entry whose parent is missing from every listing.
+ */
+export async function indexEntry(input: {
+  organizationId: string;
+  serverId: string;
+  path: string;
+  type: "file" | "directory" | "symlink";
+  sizeBytes?: number;
+  mode?: string | null;
+  modifiedAt?: Date | null;
+}): Promise<void> {
+  if (input.path === "/") return;
+
+  // Only meaningful once a full walk has succeeded. Before that listFromIndex
+  // returns null anyway, and writing rows would suggest coverage there is not.
+  const run = await pool.query<{ status: string }>(
+    "SELECT status FROM remote_index_runs WHERE server_id = $1",
+    [input.serverId],
+  );
+  if (run.rows[0]?.status !== "ready") return;
+
+  const ancestors = ancestorsOf(input.path);
+  if (ancestors.length > 0) {
+    await pool.query(
+      `INSERT INTO remote_entries(organization_id, server_id, path, parent_path, name, type, size_bytes, indexed_at)
+       SELECT $1, $2, a.path, $3 || regexp_replace(a.path, '/[^/]+$', ''), regexp_replace(a.path, '^.*/', ''),
+              'directory', 0, now()
+         FROM unnest($4::text[]) AS a(path)
+       ON CONFLICT (server_id, path) DO NOTHING`,
+      // The empty prefix keeps a top-level ancestor's parent as "/" rather than
+      // the empty string regexp_replace would otherwise produce.
+      [input.organizationId, input.serverId, "", ancestors],
+    );
+    await pool.query(
+      "UPDATE remote_entries SET parent_path = '/' WHERE server_id = $1 AND parent_path = ''",
+      [input.serverId],
+    );
+  }
+
+  await pool.query(
+    `INSERT INTO remote_entries(organization_id, server_id, path, parent_path, name, type, size_bytes, mode, modified_at, indexed_at)
+     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
+     ON CONFLICT (server_id, path) DO UPDATE SET
+       type = EXCLUDED.type, size_bytes = EXCLUDED.size_bytes,
+       mode = COALESCE(EXCLUDED.mode, remote_entries.mode),
+       modified_at = EXCLUDED.modified_at, indexed_at = now()`,
+    [
+      input.organizationId,
+      input.serverId,
+      input.path,
+      parentOf(input.path),
+      input.path.split("/").filter(Boolean).at(-1) ?? input.path,
+      input.type,
+      input.sizeBytes ?? 0,
+      input.mode ?? null,
+      input.modifiedAt ?? new Date(),
+    ],
   );
 }
