@@ -7,6 +7,7 @@ import { joinRemoteRoot, normalizeRemotePath } from "./path-policy.js";
 import { AppError, badRequest } from "../lib/errors.js";
 import { resolveAllowedSftpAddress } from "./egress-policy.js";
 import { EMPTY_METRICS, metricsCommand, parseMetrics, type HostMetrics } from "./host-metrics.js";
+import { translateSftpError } from "./sftp-errors.js";
 
 /** The parts of the ssh2 Client and its exec stream this adapter touches. */
 interface MetricsStream {
@@ -173,7 +174,8 @@ export class SftpAdapter implements RemoteFilesystem {
 
   async list(remotePath: string): Promise<RemoteEntry[]> {
     const normalized = normalizeRemotePath(remotePath);
-    const entries = await this.client.list(this.mapped(normalized));
+    const entries = await this.client.list(this.mapped(normalized))
+      .catch((error: unknown) => { throw translateSftpError(error, `list ${normalized}`); });
     return entries.map((entry) => ({
       name: entry.name,
       path: path.posix.join(normalized, entry.name),
@@ -185,7 +187,8 @@ export class SftpAdapter implements RemoteFilesystem {
   }
 
   async read(remotePath: string): Promise<Buffer> {
-    const value = await this.client.get(this.mapped(remotePath));
+    const value = await this.client.get(this.mapped(remotePath))
+      .catch((error: unknown) => { throw translateSftpError(error, `read ${remotePath}`); });
     if (!Buffer.isBuffer(value)) throw new AppError(502, "SFTP_READ_FAILED", "Remote client returned an unsupported stream");
     return value;
   }
@@ -198,24 +201,30 @@ export class SftpAdapter implements RemoteFilesystem {
       await this.client.posixRename(temporary, target);
     } catch (error) {
       try { await this.client.delete(temporary); } catch { /* best effort cleanup */ }
-      throw error;
+      throw translateSftpError(error, `write ${remotePath}`);
     }
   }
 
   async mkdir(remotePath: string): Promise<void> {
-    await this.client.mkdir(this.mapped(remotePath), true);
+    await this.client.mkdir(this.mapped(remotePath), true)
+      .catch((error: unknown) => { throw translateSftpError(error, `create ${remotePath}`); });
   }
 
   async delete(remotePath: string, recursive = false): Promise<void> {
     const normalized = normalizeRemotePath(remotePath);
     if (normalized === "/") throw badRequest("The server root cannot be deleted");
     const target = this.mapped(normalized);
-    const details = await this.client.stat(target);
-    if (details.isDirectory) await this.client.rmdir(target, recursive);
-    else await this.client.delete(target);
+    try {
+      const details = await this.client.stat(target);
+      if (details.isDirectory) await this.client.rmdir(target, recursive);
+      else await this.client.delete(target);
+    } catch (error) {
+      throw translateSftpError(error, `delete ${normalized}`);
+    }
   }
 
   async rename(from: string, to: string): Promise<void> {
-    await this.client.rename(this.mapped(from), this.mapped(to));
+    await this.client.rename(this.mapped(from), this.mapped(to))
+      .catch((error: unknown) => { throw translateSftpError(error, `rename ${from}`); });
   }
 }
