@@ -41,6 +41,7 @@ import { Link, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge, Breadcrumbs, Button, Field, IconButton, Input, Modal, Progress, SearchInput, Tabs } from "@/components/ui";
 import { api } from "@/lib/api";
+import { useAction } from "@/hooks/use-action";
 import { cn, formatBytes, relativeTime } from "@/lib/utils";
 import type { RemoteFile, Server } from "@/types";
 
@@ -101,7 +102,6 @@ export function FileExplorerPage() {
   const [savedContent, setSavedContent] = useState("");
   const [readOnly, setReadOnly] = useState(false);
   const [remoteChecksum, setRemoteChecksum] = useState<string>();
-  const [saving, setSaving] = useState(false);
   const [createOpen, setCreateOpen] = useState<"file" | "folder" | null>(null);
   const [newName, setNewName] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -232,7 +232,7 @@ export function FileExplorerPage() {
     } catch { setVersions([]); }
   }
 
-  async function restoreVersion(versionId: string) {
+  async function restoreVersionRequest(versionId: string) {
     if (!selected) return;
     try {
       await api.post(`/servers/${serverId}/files/rollback`, { versionId, note: "Restored from the Orbit workspace" });
@@ -267,22 +267,32 @@ export function FileExplorerPage() {
   }
   async function save() {
     if (!selected) return;
-    setSaving(true);
-    try {
-      if (localStorage.getItem("orbit.accessToken")) {
-        const result = await api.put<{ checksum: string; versionNumber: number }>(`/servers/${serverId}/files/content`, { path: selected.path, content, encoding: "utf8", expectedChecksum: remoteChecksum, note: "Edited in Orbit web workspace" });
-        setRemoteChecksum(result.checksum);
-        toast.success(`${selected.name} saved atomically`, { description: `Version ${result.versionNumber} created · checksum verified` });
-      } else {
-        await new Promise((resolve) => window.setTimeout(resolve, 600));
-        toast.success(`${selected.name} saved atomically`, { description: "Version v_195 created · checksum verified" });
-      }
-      setSavedContent(content);
-    } catch (error) {
+    // No signed-out branch. This previously waited 600ms and reported a saved
+    // "Version v_195" without sending anything, so an expired session looked
+    // exactly like a successful write of a file that had not been written.
+    const result = await api.put<{ checksum: string; versionNumber: number }>(
+      `/servers/${serverId}/files/content`,
+      { path: selected.path, content, encoding: "utf8", expectedChecksum: remoteChecksum, note: "Edited in Orbit web workspace" },
+    ).catch((error: unknown) => {
       toast.error("Save paused", { description: error instanceof Error ? error.message : "The remote revision changed." });
-    } finally { setSaving(false); }
+      return undefined;
+    });
+    if (!result) return;
+
+    setRemoteChecksum(result.checksum);
+    setSavedContent(content);
+    toast.success(`${selected.name} saved`, { description: `Version ${result.versionNumber} created · checksum verified` });
+
+    // The save just created a version and changed the file's size and mtime,
+    // so both the history panel and the listing are now stale. Refreshing them
+    // here is what makes the new version appear without a reload — the whole
+    // point of showing a version count next to the tab.
+    await Promise.all([
+      loadVersions(selected.path),
+      loadDirectory(path, undefined, true),
+    ]);
   }
-  async function create() {
+  async function createRequest() {
     if (!newName.trim() || !createOpen) return;
     // Created inside the directory being viewed, not at the server root.
     const target = `${path === "/" ? "" : path}/${newName.trim()}`;
@@ -297,7 +307,7 @@ export function FileExplorerPage() {
     }
   }
 
-  async function removeSelected() {
+  async function removeSelectedRequest() {
     const targets = selectedIds.length
       ? files.filter((file) => selectedIds.includes(file.id))
       : selected ? [selected] : [];
@@ -319,6 +329,17 @@ export function FileExplorerPage() {
     if (removed) toast.success(`${removed} item${removed === 1 ? "" : "s"} deleted`, { description: "A snapshot was captured before removal." });
     await loadDirectory(path, undefined, true);
   }
+
+  // Every action that reaches the server is wrapped so a second click while the
+  // first is in flight is ignored rather than starting another request. Each
+  // pairs with a flag the button uses to show it is working, because silence
+  // during a slow call is what prompts the second click in the first place.
+  const [restoreVersion, restoring] = useAction(restoreVersionRequest);
+  const [create, creating] = useAction(createRequest);
+  const [removeSelected, removing] = useAction(removeSelectedRequest);
+  const [saveFile, savingFile] = useAction(save);
+  const [uploadSelected] = useAction(uploadFiles);
+
   // Nothing below can render meaningfully without the server record, and the
   // whole page depends on it, so this gate keeps every later access non-null.
   if (!server) {
@@ -334,7 +355,7 @@ export function FileExplorerPage() {
   return (
     <div className="flex h-[calc(100vh-56px)] min-h-[640px] flex-col md:h-screen">
       <header className="flex min-h-14 items-center gap-3 border-b border-border px-3 sm:px-4"><Link to={`/workspace/servers/${server.id}`} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"><ArrowLeft className="size-3.5" /></Link><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><h1 className="truncate text-xs font-medium">{server.name}</h1><Badge tone="success" dot>Connected</Badge></div><p className="mt-0.5 hidden font-mono text-[8px] text-zinc-600 sm:block">{server.username}@{server.host} · SFTP</p></div><div className="hidden items-center gap-2 sm:flex">
-        <input ref={uploadRef} type="file" multiple hidden onChange={(event) => void uploadFiles(event.target.files)} />
+        <input ref={uploadRef} type="file" multiple hidden onChange={(event) => void uploadSelected(event.target.files)} />
         <Button variant="outline" size="sm" disabled={loading} onClick={() => void loadDirectory(path, undefined, true)}><RefreshCw className={loading ? "animate-spin" : undefined} />Refresh</Button>
         <Button size="sm" disabled={uploading} onClick={() => uploadRef.current?.click()}><Upload />{uploading ? "Uploading…" : "Upload"}</Button>
       </div><IconButton label="More actions"><MoreHorizontal /></IconButton></header>
@@ -365,9 +386,9 @@ export function FileExplorerPage() {
         </main>
 
         {panel && selected && <aside className="fixed inset-0 z-50 flex min-w-0 flex-col bg-background sm:left-auto sm:w-[560px] sm:border-l sm:border-border xl:static xl:z-auto xl:w-[46%] xl:max-w-[720px] xl:bg-card/20"><header className="flex min-h-11 items-center gap-2 border-b border-border px-3"><FileCode2 className="size-3.5 text-blue-300" /><span className="min-w-0 flex-1 truncate text-[10px] font-medium">{selected.name}</span>{unsaved && <Badge tone="warning">Unsaved</Badge>}<IconButton label="Close editor" className="size-7" onClick={() => { if (!unsaved || window.confirm("Discard unsaved changes?")) setPanel(false); }}><X /></IconButton></header><Tabs value={tab} onChange={setTab} items={[{ value: "editor", label: "Editor" }, { value: "diff", label: "Changes", count: unsaved ? 1 : 0 }, { value: "history", label: "History", count: versions.length }, { value: "info", label: "Details" }]} />
-          {tab === "editor" && <div className="flex min-h-0 flex-1 flex-col"><div className="flex min-h-10 items-center gap-1 border-b border-border px-2"><IconButton label="Save" className="size-7" onClick={save}><Save /></IconButton><IconButton label="Compare" className="size-7" onClick={() => setTab("diff")}><GitCompare /></IconButton><IconButton label="History" className="size-7" onClick={() => setTab("history")}><History /></IconButton><span className="mx-1 h-4 w-px bg-border" /><span className="text-[7px] text-zinc-700">TypeScript · UTF-8 · LF</span><div className="ml-auto flex gap-1"><Button size="xs" variant="ghost" onClick={() => setContent(savedContent)} disabled={!unsaved}>Discard</Button><Button size="xs" onClick={save} loading={saving} disabled={!unsaved}><Save />Save atomically</Button></div></div><div className="relative min-h-0 flex-1 overflow-hidden bg-[#0b0c0e]"><div className="pointer-events-none absolute inset-y-0 left-0 w-10 border-r border-white/[0.045] bg-black/10 py-3 text-right font-mono text-[8px] leading-5 text-zinc-800">{Array.from({ length: lineCount }, (_, index) => <div key={index} className="pr-2">{index + 1}</div>)}</div><textarea value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} className="absolute inset-0 resize-none bg-transparent py-3 pl-12 pr-3 font-mono text-[9px] leading-5 text-zinc-400 outline-none" /></div><footer className="flex h-7 items-center gap-3 border-t border-border px-3 text-[7px] text-zinc-700"><span>Ln {lineCount}, Col 1</span><span>{formatBytes(new Blob([content]).size)}</span><span className="ml-auto flex items-center gap-1 text-emerald-400"><ShieldCheck className="size-2.5" />revision locked</span></footer></div>}
+          {tab === "editor" && <div className="flex min-h-0 flex-1 flex-col"><div className="flex min-h-10 items-center gap-1 border-b border-border px-2"><IconButton label="Save" className="size-7" disabled={savingFile || !unsaved} onClick={() => void saveFile()}><Save /></IconButton><IconButton label="Compare" className="size-7" onClick={() => setTab("diff")}><GitCompare /></IconButton><IconButton label="History" className="size-7" onClick={() => setTab("history")}><History /></IconButton><span className="mx-1 h-4 w-px bg-border" /><span className="text-[7px] text-zinc-700">TypeScript · UTF-8 · LF</span><div className="ml-auto flex gap-1"><Button size="xs" variant="ghost" onClick={() => setContent(savedContent)} disabled={!unsaved}>Discard</Button><Button size="xs" onClick={() => void saveFile()} loading={savingFile} disabled={!unsaved}><Save />Save atomically</Button></div></div><div className="relative min-h-0 flex-1 overflow-hidden bg-[#0b0c0e]"><div className="pointer-events-none absolute inset-y-0 left-0 w-10 border-r border-white/[0.045] bg-black/10 py-3 text-right font-mono text-[8px] leading-5 text-zinc-800">{Array.from({ length: lineCount }, (_, index) => <div key={index} className="pr-2">{index + 1}</div>)}</div><textarea value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} className="absolute inset-0 resize-none bg-transparent py-3 pl-12 pr-3 font-mono text-[9px] leading-5 text-zinc-400 outline-none" /></div><footer className="flex h-7 items-center gap-3 border-t border-border px-3 text-[7px] text-zinc-700"><span>Ln {lineCount}, Col 1</span><span>{formatBytes(new Blob([content]).size)}</span><span className="ml-auto flex items-center gap-1 text-emerald-400"><ShieldCheck className="size-2.5" />revision locked</span></footer></div>}
           {tab === "diff" && <div className="min-h-0 flex-1 overflow-auto p-3"><div className="mb-3 flex items-center justify-between"><div><p className="text-[10px] font-medium">Working copy ↔ remote</p><p className="mt-0.5 text-[8px] text-zinc-600">Content and revision comparison</p></div><Badge tone={unsaved ? "warning" : "success"}>{unsaved ? "1 file changed" : "No changes"}</Badge></div>{unsaved ? <pre className="overflow-x-auto rounded-lg border border-border bg-[#0b0c0e] p-4 font-mono text-[8px] leading-5"><span className="text-zinc-600">@@ -8,6 +8,8 @@</span>{"\n"}<span className="text-red-300">-server.close(() =&gt; process.exit(0));</span>{"\n"}<span className="bg-emerald-400/5 text-emerald-300">+server.close(() =&gt; &#123;</span>{"\n"}<span className="bg-emerald-400/5 text-emerald-300">+  process.exit(0);</span>{"\n"}<span className="bg-emerald-400/5 text-emerald-300">+&#125;);</span></pre> : <div className="grid min-h-52 place-items-center rounded-lg border border-dashed border-border text-center"><div><Check className="mx-auto size-5 text-emerald-400" /><p className="mt-3 text-xs">Working copy matches remote</p><p className="mt-1 text-[9px] text-zinc-600">Revision v_194 · checksum verified</p></div></div>}<div className="mt-3 rounded-md border border-blue-400/15 bg-blue-400/[0.04] p-3 text-[8px] leading-4 text-blue-200/60">Orbit rechecks the remote revision immediately before saving. If another operator changed the file, your save pauses for conflict resolution.</div></div>}
-          {tab === "history" && <div className="min-h-0 flex-1 overflow-y-auto"><div className="p-3"><p className="text-[10px] font-medium">Version history</p><p className="mt-1 text-[8px] text-zinc-600">Every safe save and pre-change recovery point</p></div><div className="divide-y divide-border border-y border-border">{versions.map((version, index) => <article key={version.id} className="p-3 hover:bg-white/[0.02]"><div className="flex items-start gap-3"><span className={cn("mt-0.5 grid size-7 shrink-0 place-items-center rounded-full", index === 0 ? "bg-blue-400/10 text-blue-300" : "bg-muted text-muted-foreground")}><History className="size-3" /></span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate text-[10px] font-medium">Version {version.versionNumber}</p>{index === 0 && <Badge tone="info">Current</Badge>}</div><p className="mt-1 text-[8px] text-zinc-600">{version.createdBy ?? "System"} · {relativeTime(version.createdAt)}</p><p className="mt-2 text-[9px] text-zinc-400">{version.note || version.operation}</p><div className="mt-2 flex gap-3 font-mono text-[7px] text-zinc-700"><span>{version.checksum.slice(0, 12)}</span><span>{formatBytes(version.sizeBytes)}</span><span>{version.operation}</span></div></div>{index > 0 && <div className="flex gap-1"><IconButton label="Restore version" className="size-7" onClick={() => void restoreVersion(version.id)}><RefreshCw /></IconButton></div>}</div></article>)}
+          {tab === "history" && <div className="min-h-0 flex-1 overflow-y-auto"><div className="p-3"><p className="text-[10px] font-medium">Version history</p><p className="mt-1 text-[8px] text-zinc-600">Every safe save and pre-change recovery point</p></div><div className="divide-y divide-border border-y border-border">{versions.map((version, index) => <article key={version.id} className="p-3 hover:bg-white/[0.02]"><div className="flex items-start gap-3"><span className={cn("mt-0.5 grid size-7 shrink-0 place-items-center rounded-full", index === 0 ? "bg-blue-400/10 text-blue-300" : "bg-muted text-muted-foreground")}><History className="size-3" /></span><div className="min-w-0 flex-1"><div className="flex items-center gap-2"><p className="truncate text-[10px] font-medium">Version {version.versionNumber}</p>{index === 0 && <Badge tone="info">Current</Badge>}</div><p className="mt-1 text-[8px] text-zinc-600">{version.createdBy ?? "System"} · {relativeTime(version.createdAt)}</p><p className="mt-2 text-[9px] text-zinc-400">{version.note || version.operation}</p><div className="mt-2 flex gap-3 font-mono text-[7px] text-zinc-700"><span>{version.checksum.slice(0, 12)}</span><span>{formatBytes(version.sizeBytes)}</span><span>{version.operation}</span></div></div>{index > 0 && <div className="flex gap-1"><IconButton label="Restore version" className="size-7" disabled={restoring} onClick={() => void restoreVersion(version.id)}><RefreshCw className={restoring ? "animate-spin" : undefined} /></IconButton></div>}</div></article>)}
             {!versions.length && <p className="p-4 text-center text-[9px] text-zinc-600">No version history yet. Saving this file creates the first version.</p>}
           </div></div>}
           {tab === "info" && <div className="min-h-0 flex-1 overflow-y-auto p-4"><div className="rounded-lg border border-border"><div className="divide-y divide-border">{[["Path", selected.path], ["Size", formatBytes(selected.size)], ["Permissions", selected.permissions], ["Owner", selected.owner], ["Modified", new Date(selected.modifiedAt).toLocaleString()], ["Encoding", "UTF-8"], ["Line endings", "LF"], ["Checksum", "sha256:8af31b…d921"]].map(([label, value]) => <div key={label} className="grid grid-cols-[90px_1fr] gap-3 px-3 py-3 text-[8px]"><span className="text-zinc-600">{label}</span><span className="break-all font-mono text-zinc-300">{value}</span></div>)}</div></div><div className="mt-3 grid grid-cols-2 gap-2"><Button variant="outline" size="sm"><ArrowDownToLine />Download</Button><Button variant="outline" size="sm"><Copy />Copy path</Button><Button variant="outline" size="sm"><Pencil />Rename</Button><Button variant="danger" size="sm" onClick={() => setDeleteOpen(true)}><Trash2 />Recycle</Button></div></div>}
@@ -376,8 +397,8 @@ export function FileExplorerPage() {
 
       {transferOpen && <div className="fixed bottom-3 left-3 right-3 z-40 rounded-lg border border-blue-400/20 bg-[#15161a]/95 p-3 shadow-2xl shadow-black/50 backdrop-blur md:left-60 xl:right-auto xl:w-[390px]"><div className="flex items-center gap-3"><span className="grid size-8 place-items-center rounded-md bg-blue-400/10 text-blue-300"><ArrowUpToLine className="size-3.5" /></span><div className="min-w-0 flex-1"><div className="flex justify-between gap-3"><p className="truncate text-[9px] font-medium">release-2026.07.19.tar.gz</p><span className="text-[8px] text-blue-300">68%</span></div><Progress value={68} className="mt-2 h-1" indicatorClassName="bg-blue-400" /><p className="mt-1.5 text-[7px] text-zinc-600">148 MB / 217 MB · 18.4 MB/s · 4 sec remaining</p></div><IconButton label="Close transfer" className="size-7" onClick={() => setTransferOpen(false)}><X /></IconButton></div></div>}
 
-      <Modal open={Boolean(createOpen)} onClose={() => setCreateOpen(null)} title={`Create ${createOpen ?? "item"}`} description={`Inside ${server.rootPath}`} size="sm" footer={<><Button variant="outline" onClick={() => setCreateOpen(null)}>Cancel</Button><Button onClick={create}>Create</Button></>}><Field label={createOpen === "folder" ? "Folder name" : "File name"}><Input autoFocus value={newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={(event) => event.key === "Enter" && create()} placeholder={createOpen === "folder" ? "new-folder" : "config.ts"} /></Field><p className="mt-3 text-[8px] text-zinc-600">Permissions will use the server profile default and can be changed after creation.</p></Modal>
-      <Modal open={deleteOpen} onClose={() => setDeleteOpen(false)} title="Move to recycle bin?" description="This action is recoverable until the workspace retention period expires." size="sm" footer={<><Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button><Button variant="danger" onClick={removeSelected}><Trash2 />Move to recycle bin</Button></>}><div className="rounded-md border border-border bg-black/20 p-3 text-[9px] text-zinc-400">{selectedIds.length ? `${selectedIds.length} selected items` : selected?.name ?? "Selected item"}</div></Modal>
+      <Modal open={Boolean(createOpen)} onClose={() => setCreateOpen(null)} title={`Create ${createOpen ?? "item"}`} description={`Inside ${server.rootPath}`} size="sm" footer={<><Button variant="outline" onClick={() => setCreateOpen(null)} disabled={creating}>Cancel</Button><Button onClick={() => void create()} loading={creating}>Create</Button></>}><Field label={createOpen === "folder" ? "Folder name" : "File name"}><Input autoFocus value={newName} onChange={(event) => setNewName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void create(); }} placeholder={createOpen === "folder" ? "new-folder" : "config.ts"} /></Field><p className="mt-3 text-[8px] text-zinc-600">Permissions will use the server profile default and can be changed after creation.</p></Modal>
+      <Modal open={deleteOpen} onClose={() => setDeleteOpen(false)} title="Move to recycle bin?" description="This action is recoverable until the workspace retention period expires." size="sm" footer={<><Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={removing}>Cancel</Button><Button variant="danger" onClick={() => void removeSelected()} loading={removing}><Trash2 />Move to recycle bin</Button></>}><div className="rounded-md border border-border bg-black/20 p-3 text-[9px] text-zinc-400">{selectedIds.length ? `${selectedIds.length} selected items` : selected?.name ?? "Selected item"}</div></Modal>
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Eye, EyeOff, KeyRound, Plus, SearchX, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { useAction } from "@/hooks/use-action";
 import { relativeTime } from "@/lib/utils";
 import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, pageContainerClass } from "./_shared";
 
@@ -84,7 +85,11 @@ export function ApiKeysPage() {
     } finally { setCreating(false); }
   }
 
-  async function revoke(key: ApiKey) {
+  // A second click while the first request is in flight is ignored, and each
+  // button reports that it is working — silence is what invites the second click.
+  const [revoke, revokePending] = useAction(revokeRequest);
+
+  async function revokeRequest(key: ApiKey) {
     if (!window.confirm(`Revoke "${key.name}"? Anything using it stops working immediately.`)) return;
     try {
       await api.delete(`/api-keys/${key.id}`);
@@ -147,7 +152,7 @@ export function ApiKeysPage() {
                   {key.expiresAt ? `Expires ${relativeTime(key.expiresAt)}` : "No expiry"}
                 </span>
                 <div className="flex justify-end">
-                  {!key.revokedAt && <IconButton title="Revoke" onClick={() => void revoke(key)}><Trash2 className="size-3.5" /></IconButton>}
+                  {!key.revokedAt && <IconButton title="Revoke" onClick={() => void revoke(key)} disabled={revokePending}><Trash2 className="size-3.5" /></IconButton>}
                 </div>
               </div>)}
             </div>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clipboard, MessageSquare, Plus, Send, Trash2, Webhook, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { useAction } from "@/hooks/use-action";
 import { relativeTime } from "@/lib/utils";
 import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, Stat, StatusBadge, Toggle, pageContainerClass } from "./_shared";
 
@@ -105,7 +106,11 @@ export function IntegrationsPage() {
     }
   }
 
-  async function remove(integration: Integration) {
+  // A second click while the first request is in flight is ignored, and each
+  // button reports that it is working — silence is what invites the second click.
+  const [remove, removePending] = useAction(removeRequest);
+
+  async function removeRequest(integration: Integration) {
     if (!window.confirm(`Remove "${integration.name}"? Events will stop being delivered there.`)) return;
     try {
       await api.delete(`/integrations/${integration.id}`);
@@ -176,7 +181,7 @@ export function IntegrationsPage() {
                     <button className={buttonClass} disabled={testing === integration.id} onClick={() => void test(integration)}>
                       <Send className="size-3" />{testing === integration.id ? "Sending…" : "Test"}
                     </button>
-                    <IconButton title="Remove" onClick={() => void remove(integration)}><Trash2 className="size-3.5" /></IconButton>
+                    <IconButton title="Remove" onClick={() => void remove(integration)} disabled={removePending}><Trash2 className="size-3.5" /></IconButton>
                   </div>
                 </div>
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BookOpenCheck, CheckCircle2, Play, Plus, SearchX, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { useAction } from "@/hooks/use-action";
 import { cn, relativeTime } from "@/lib/utils";
 import { buttonClass, controlClass, EmptyState, IconButton, Modal, PageHeader, Panel, primaryButtonClass, SearchField, Stat, StatusBadge, pageContainerClass } from "./_shared";
 
@@ -114,7 +115,11 @@ export function RunbooksPage() {
     } finally { setRunning(undefined); }
   }
 
-  async function remove(book: Runbook) {
+  // A second click while the first request is in flight is ignored, and each
+  // button reports that it is working — silence is what invites the second click.
+  const [remove, removePending] = useAction(removeRequest);
+
+  async function removeRequest(book: Runbook) {
     if (!window.confirm(`Delete "${book.name}"? Its run history is deleted too.`)) return;
     try {
       await api.delete(`/runbooks/${book.id}`);
@@ -218,7 +223,7 @@ export function RunbooksPage() {
                     <button className={primaryButtonClass} disabled={running === book.id || !target} onClick={() => void run(book)}>
                       <Play className="size-3" />{running === book.id ? "Running…" : "Run"}
                     </button>
-                    <IconButton title="Delete" onClick={() => void remove(book)}><Trash2 className="size-3.5" /></IconButton>
+                    <IconButton title="Delete" onClick={() => void remove(book)} disabled={removePending}><Trash2 className="size-3.5" /></IconButton>
                   </div>
                 </div>
 
